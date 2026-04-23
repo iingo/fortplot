@@ -40,19 +40,26 @@ contains
 
     function discover_and_init_font() result(success)
         !! Discover and initialize font from system locations.
-        !! If preferred_font_name is set, try it first.
+        !! Priority: preferred_font_name (set by config) -> local override
+        !! in cwd -> Helvetica -> Liberation Sans -> Arial -> DejaVu Sans.
         logical :: success
         character(len=256) :: font_path
 
         success = .false.
-        
-        ! Local override, tested, works
+
+        if (len_trim(preferred_font_name) > 0) then
+            if (find_font_by_name(trim(preferred_font_name), &
+                                  font_path)) then
+                success = try_init_font(font_path)
+                if (success) return
+            end if
+        end if
+
         if (check_local_override(font_path)) then
             success = try_init_font(font_path)
             if (success) return
         end if
 
-        ! Priority order: Helvetica -> Liberation Sans -> Arial -> DejaVu Sans
         if (find_font_by_name("Helvetica", font_path)) then
             success = try_init_font(font_path)
             if (success) return
