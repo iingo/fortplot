@@ -5,6 +5,7 @@ module fortplot_figure_initialization
     !! Extracted from fortplot_figure_core to reduce file size and improve modularity
 
     use, intrinsic :: iso_fortran_env, only: wp => real64
+    use fortplot_constants, only: REFERENCE_DPI, TAB10_RGB
     use fortplot_context
     use fortplot_utils, only: initialize_backend
     use fortplot_legend, only: legend_t, legend_entry_t
@@ -28,8 +29,7 @@ module fortplot_figure_initialization
         ! Figure dimensions
         integer :: width = 640
         integer :: height = 480
-        real(wp) :: dpi = 100.0_wp
-        ! Default DPI for consistency with matplotlib interface
+        real(wp) :: dpi = REFERENCE_DPI
 
         ! Plot area settings
         real(wp) :: margin_left = 0.15_wp
@@ -78,37 +78,29 @@ module fortplot_figure_initialization
         character(len=:), allocatable :: suptitle
         real(wp) :: suptitle_fontsize = 14.0_wp
 
-        ! Color palette: seaborn colorblind palette
-        real(wp), dimension(3, 6) :: colors = reshape([ &
-                                                      0.0_wp, 0.447_wp, 0.698_wp, &
-                                                      ! #0072B2 (blue)
-                                                      0.0_wp, 0.619_wp, 0.451_wp, &
-                                                      ! #009E73 (green)
-                                                      0.835_wp, 0.369_wp, 0.0_wp, &
-                                                      ! #D55E00 (orange)
-                                                      0.8_wp, 0.475_wp, 0.655_wp, &
-                                                      ! #CC79A7 (purple)
-                                                      0.941_wp, 0.894_wp, 0.259_wp, &
-                                                      ! #F0E442 (yellow)
-                                                      0.337_wp, 0.702_wp, 0.914_wp], &
-                                                      ! #56B4E9 (cyan)
-                                                      [3, 6])
+        real(wp), dimension(3, 10) :: colors = TAB10_RGB
 
         ! Legend support
         type(legend_t) :: legend_data
         logical :: show_legend = .false.
         integer :: max_plots = 500
 
-        ! Drawing properties
-        real(wp) :: current_line_width = 1.0_wp
+        ! Drawing properties (line width in points, 1pt = 1/72 inch)
+        real(wp) :: current_line_width = 1.5_wp
         logical :: has_error = .false.
 
         ! Grid settings
         logical :: grid_enabled = .false.
         character(len=10) :: grid_which = 'both'
         character(len=1) :: grid_axis = 'b'
-        real(wp) :: grid_alpha = 0.3_wp
+        real(wp) :: grid_alpha = 1.0_wp
         character(len=10) :: grid_linestyle = '-'
+        character(len=7) :: grid_color = '#b0b0b0'
+
+        ! Configurable font sizes (pixels, -1 = use default)
+        real(wp) :: title_font_size = -1.0_wp
+        real(wp) :: label_font_size = -1.0_wp
+        real(wp) :: tick_font_size = -1.0_wp
 
         ! Stateful colorbar (matplotlib-style)
         logical :: colorbar_enabled = .false.
@@ -190,12 +182,12 @@ contains
             if (dpi <= 0.0_wp) then
                 call validation_warning("Invalid DPI value, using default 100.0", &
                                         "figure_initialization")
-                state%dpi = 100.0_wp
+                state%dpi = REFERENCE_DPI
             else
                 state%dpi = dpi
             end if
         else
-            state%dpi = 100.0_wp
+            state%dpi = REFERENCE_DPI
         end if
     end subroutine set_state_dpi
 
@@ -247,23 +239,26 @@ contains
                     "Empty backend name provided, using default 'png'", &
                     "figure_initialization")
                 state%backend_name = 'png'
-                call initialize_backend(state%backend, 'png', state%width, state%height)
+                call initialize_backend(state%backend, 'png', state%width, &
+                                        state%height, state%dpi)
             else if (backend /= 'png' .and. backend /= 'pdf' .and. backend /= &
                      'ascii') then
                 call validation_warning( &
                     "Unknown backend '"//trim(backend)//"', using default 'png'", &
                     "figure_initialization")
                 state%backend_name = 'png'
-                call initialize_backend(state%backend, 'png', state%width, state%height)
+                call initialize_backend(state%backend, 'png', state%width, &
+                                        state%height, state%dpi)
             else
                 state%backend_name = backend
                 call initialize_backend(state%backend, backend, state%width, &
-                                        state%height)
+                                        state%height, state%dpi)
             end if
         else
             if (.not. allocated(state%backend)) then
                 state%backend_name = 'png'
-                call initialize_backend(state%backend, 'png', state%width, state%height)
+                call initialize_backend(state%backend, 'png', state%width, &
+                                        state%height, state%dpi)
             end if
         end if
     end subroutine set_state_backend
@@ -472,7 +467,7 @@ contains
         ! Reinitialize backend; initialize_backend has intent(out) and will handle
         ! deallocation.
         call initialize_backend(state%backend, backend_name, state%width, &
-                                state%height)
+                                state%height, state%dpi)
 
         ! Update the backend_name field to match the current backend
         state%backend_name = backend_name

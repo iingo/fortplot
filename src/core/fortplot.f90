@@ -86,6 +86,17 @@ module fortplot
     ! Annotation functionality with coordinate constants
     use fortplot_annotations, only: COORD_DATA, COORD_FIGURE, COORD_AXIS
 
+    ! Vega-Lite spec types and builder API
+    use fortplot_spec_types, only: spec_t, mark_t, encoding_t, channel_t, &
+                                   data_t, data_column_t, scale_t, axis_t, &
+                                   layer_t
+    use fortplot_spec_builder, only: vl_line, vl_point, vl_bar, vl_area, &
+                                     vl_layer_add, vl_channel, spec_savefig
+    use fortplot_spec_frontend_adapters, only: figure_to_spec
+    use fortplot_spec_json, only: spec_to_json, spec_to_json_file, &
+                                   escape_json_string
+    use fortplot_spec_json_parse, only: json_to_spec
+
     ! Matplotlib-compatible API (all pyplot-style functions)
     use fortplot_matplotlib, only: plot, contour, contour_filled, pcolormesh, &
                                    streamplot, quiver, add_quiver, &
@@ -173,6 +184,17 @@ module fortplot
 
     ! Contour region extraction interface
     public :: contour_region_t, contour_polygon_t, extract_contour_regions
+
+    ! Vega-Lite spec types
+    public :: spec_t, mark_t, encoding_t, channel_t
+    public :: data_t, data_column_t, scale_t, axis_t, layer_t
+
+    ! Vega-Lite builder API
+    public :: vl_line, vl_point, vl_bar, vl_area
+    public :: vl_layer_add, vl_channel
+    public :: spec_savefig, figure_to_spec
+    public :: spec_to_json, spec_to_json_file, json_to_spec
+    public :: escape_json_string
 
     ! =========================================================================
     ! STYLE CONSTANTS (matplotlib-compatible)

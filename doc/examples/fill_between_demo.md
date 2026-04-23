@@ -65,6 +65,8 @@ response
 
 [Download ASCII](../../media/examples/fill_between_demo/oo_fill_between.txt)
 
+[Download PDF](../../media/examples/fill_between_demo/oo_fill_between.pdf)
+
 ### Stateful Fill Between
 
 ![stateful_fill_between.png](../../media/examples/fill_between_demo/stateful_fill_between.png)
@@ -104,4 +106,6 @@ amplitude
 ```
 
 [Download ASCII](../../media/examples/fill_between_demo/stateful_fill_between.txt)
+
+[Download PDF](../../media/examples/fill_between_demo/stateful_fill_between.pdf)
 

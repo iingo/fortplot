@@ -60,3 +60,5 @@ ASCII output:
 
 [Download ASCII](../../media/examples/polar_demo/polar_demo.txt)
 
+[Download PDF](../../media/examples/polar_demo/polar_demo.pdf)
+

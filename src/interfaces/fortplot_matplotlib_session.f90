@@ -6,11 +6,12 @@ module fortplot_matplotlib_session
     !! global figure, grid/subplot helpers, and viewer integration utilities.
 
     use, intrinsic :: iso_fortran_env, only: wp => real64
+    use fortplot_constants, only: REFERENCE_DPI
     use fortplot_figure_core, only: figure_t
     use fortplot_figure_initialization, only: configure_figure_dimensions, setup_figure_backend
     use fortplot_global, only: fig => global_figure
     use fortplot_logging, only: log_error, log_warning, log_info
-    use fortplot_security, only: safe_remove_file
+    use fortplot_system_runtime, only: delete_file_runtime
     use fortplot_system_viewer, only: launch_system_viewer
     use fortplot_png, only: png_context
     use fortplot_pdf, only: pdf_context
@@ -117,7 +118,7 @@ contains
         requested_size = [8.0_wp, 6.0_wp]
         if (present(figsize)) requested_size = figsize
 
-        fig_dpi = 100
+        fig_dpi = nint(REFERENCE_DPI)
         if (present(dpi)) fig_dpi = dpi
 
         if (requested_size(1) <= 0.0_wp .or. requested_size(2) <= 0.0_wp) then
@@ -145,7 +146,7 @@ contains
             deallocate(fig)
         end if
         allocate(figure_t :: fig)
-        call fig%initialize()
+        call fig%initialize(dpi=real(fig_dpi, wp))
         call configure_figure_dimensions(fig%state, width=width_px, height=height_px)
 
         if (allocated(fig%state%backend)) then
@@ -334,7 +335,7 @@ contains
         call launch_system_viewer(trim(temp_file), success)
         if (.not. success) then
             call log_error("Failed to launch image viewer")
-            call safe_remove_file(trim(temp_file), success)
+            call delete_file_runtime(trim(temp_file), success)
             return
         end if
 
@@ -350,7 +351,7 @@ contains
             call sleep_fortran(1000)
         end if
 
-        call safe_remove_file(trim(temp_file), success)
+        call delete_file_runtime(trim(temp_file), success)
     end subroutine show_viewer_implementation
 
     function is_gui_available() result(gui_available)

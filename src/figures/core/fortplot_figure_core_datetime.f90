@@ -1,5 +1,7 @@
 submodule(fortplot_figure_core) fortplot_figure_core_datetime
 
+    use fortplot_figure_management, only: figure_savefig_with_status, &
+                                          figure_show
     implicit none
 
 contains
@@ -30,18 +32,9 @@ contains
         class(figure_t), intent(inout) :: self
         character(len=*), intent(in) :: filename
         logical, intent(in), optional :: blocking
+        integer :: status
 
-        if (allocated(self%subplots_array) .and. self%subplot_rows > 0 .and. &
-            self%subplot_cols > 0) then
-            call core_savefig(self%state, self%plots, self%plot_count, filename, &
-                              blocking, self%annotations, self%annotation_count, &
-                              subplots_array=self%subplots_array, &
-                              subplot_rows=self%subplot_rows, &
-                              subplot_cols=self%subplot_cols)
-        else
-            call core_savefig(self%state, self%plots, self%plot_count, filename, &
-                              blocking, self%annotations, self%annotation_count)
-        end if
+        call self%savefig_with_status(filename, status, blocking)
     end subroutine savefig
 
     module subroutine savefig_with_status(self, filename, status, blocking)
@@ -50,18 +43,20 @@ contains
         integer, intent(out) :: status
         logical, intent(in), optional :: blocking
 
-        if (allocated(self%subplots_array) .and. self%subplot_rows > 0 .and. &
-            self%subplot_cols > 0) then
-            call core_savefig_with_status(self%state, self%plots, self%plot_count, &
-                                          filename, status, blocking, &
-                                          self%annotations, self%annotation_count, &
-                                          subplots_array=self%subplots_array, &
-                                          subplot_rows=self%subplot_rows, &
-                                          subplot_cols=self%subplot_cols)
+        if (allocated(self%subplots_array) .and. &
+            self%subplot_rows > 0 .and. self%subplot_cols > 0) then
+            call figure_savefig_with_status(self%state, self%plots, &
+                self%plot_count, filename, status, &
+                annotations=self%annotations, &
+                annotation_count=self%annotation_count, &
+                subplots_array=self%subplots_array, &
+                subplot_rows=self%subplot_rows, &
+                subplot_cols=self%subplot_cols)
         else
-            call core_savefig_with_status(self%state, self%plots, self%plot_count, &
-                                          filename, status, blocking, &
-                                          self%annotations, self%annotation_count)
+            call figure_savefig_with_status(self%state, self%plots, &
+                self%plot_count, filename, status, &
+                annotations=self%annotations, &
+                annotation_count=self%annotation_count)
         end if
     end subroutine savefig_with_status
 
@@ -69,16 +64,20 @@ contains
         class(figure_t), intent(inout) :: self
         logical, intent(in), optional :: blocking
 
-        if (allocated(self%subplots_array) .and. self%subplot_rows > 0 .and. &
-            self%subplot_cols > 0) then
-            call core_show(self%state, self%plots, self%plot_count, blocking, &
-                           self%annotations, self%annotation_count, &
-                           subplots_array=self%subplots_array, &
-                           subplot_rows=self%subplot_rows, &
-                           subplot_cols=self%subplot_cols)
+        if (allocated(self%subplots_array) .and. &
+            self%subplot_rows > 0 .and. self%subplot_cols > 0) then
+            call figure_show(self%state, self%plots, &
+                self%plot_count, blocking, &
+                annotations=self%annotations, &
+                annotation_count=self%annotation_count, &
+                subplots_array=self%subplots_array, &
+                subplot_rows=self%subplot_rows, &
+                subplot_cols=self%subplot_cols)
         else
-            call core_show(self%state, self%plots, self%plot_count, blocking, &
-                           self%annotations, self%annotation_count)
+            call figure_show(self%state, self%plots, &
+                self%plot_count, blocking, &
+                annotations=self%annotations, &
+                annotation_count=self%annotation_count)
         end if
     end subroutine show
 
@@ -97,4 +96,3 @@ contains
     end subroutine set_yaxis_date_format
 
 end submodule fortplot_figure_core_datetime
-
