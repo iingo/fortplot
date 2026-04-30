@@ -6,11 +6,12 @@ module fortplot_matplotlib_session
     !! global figure, grid/subplot helpers, and viewer integration utilities.
 
     use, intrinsic :: iso_fortran_env, only: wp => real64
+    use fortplot_constants, only: REFERENCE_DPI
     use fortplot_figure_core, only: figure_t
     use fortplot_figure_initialization, only: configure_figure_dimensions, setup_figure_backend
     use fortplot_global, only: fig => global_figure
     use fortplot_logging, only: log_error, log_warning, log_info
-    use fortplot_security, only: safe_remove_file
+    use fortplot_system_runtime, only: delete_file_runtime
     use fortplot_system_viewer, only: launch_system_viewer
     use fortplot_png, only: png_context
     use fortplot_pdf, only: pdf_context
@@ -114,10 +115,10 @@ contains
         fig_num = 1
         if (present(num)) fig_num = num
 
-        requested_size = [8.0_wp, 6.0_wp]
+        requested_size = [6.4_wp, 4.8_wp]
         if (present(figsize)) requested_size = figsize
 
-        fig_dpi = 100
+        fig_dpi = nint(REFERENCE_DPI)
         if (present(dpi)) fig_dpi = dpi
 
         if (requested_size(1) <= 0.0_wp .or. requested_size(2) <= 0.0_wp) then
@@ -145,7 +146,7 @@ contains
             deallocate(fig)
         end if
         allocate(figure_t :: fig)
-        call fig%initialize()
+        call fig%initialize(dpi=real(fig_dpi, wp))
         call configure_figure_dimensions(fig%state, width=width_px, height=height_px)
 
         if (allocated(fig%state%backend)) then
@@ -199,20 +200,51 @@ contains
         call log_info(trim(msg))
     end subroutine subplot
 
-    subroutine subplots(nrows, ncols)
-        !! Initialize a subplot grid using the global figure
+    subroutine subplots(nrows, ncols, axes, sharex, sharey)
+        !! Initialize an nrows-by-ncols subplot grid (matplotlib-compatible)
+        !!
+        !! Matplotlib returns (fig, axes). Fortran cannot return tuples, so
+        !! this wrapper fills the optional `axes` output with a 2D array of
+        !! axis indices matching the grid (row-major). Callers that do not
+        !! need the axis matrix may omit it, preserving backward compatibility.
+        !!
+        !! `sharex` and `sharey` are accepted for API parity but are not yet
+        !! wired into the rendering pipeline.
         integer, intent(in) :: nrows, ncols
+        integer, allocatable, intent(out), optional :: axes(:,:)
+        logical, intent(in), optional :: sharex, sharey
+        integer :: i, j
 
         call ensure_global_figure_initialized()
 
         if (nrows <= 0 .or. ncols <= 0) then
             call log_error("subplots: Invalid grid dimensions")
+            if (present(axes)) allocate(axes(0, 0))
             return
         end if
 
         call fig%subplots(nrows, ncols)
         fig%current_subplot = 1
+
+        if (present(axes)) then
+            allocate(axes(nrows, ncols))
+            do i = 1, nrows
+                do j = 1, ncols
+                    axes(i, j) = (i - 1) * ncols + j
+                end do
+            end do
+        end if
+
+        ! sharex/sharey accepted for matplotlib parity; wiring tracked separately
+        call ignore_unused_subplots_kwargs(sharex, sharey)
     end subroutine subplots
+
+    subroutine ignore_unused_subplots_kwargs(sharex, sharey)
+        !! Explicit no-op to document silent acceptance of matplotlib kwargs
+        logical, intent(in), optional :: sharex, sharey
+
+        if (present(sharex) .or. present(sharey)) return
+    end subroutine ignore_unused_subplots_kwargs
 
     function subplots_grid(nrows, ncols) result(axes)
         !! Create subplot grid and return axis indices in row-major order
@@ -239,21 +271,27 @@ contains
     end function subplots_grid
 
     subroutine savefig(filename, dpi, transparent, bbox_inches)
-        !! Save current figure using matplotlib-compatible API
+        !! Save current figure using matplotlib-compatible API.
+        !!
+        !! `dpi` is applied to the figure before rendering so raster outputs
+        !! honour the requested resolution. `transparent` and `bbox_inches`
+        !! are accepted for signature compatibility; they are not yet wired
+        !! to the raster/vector backends but are no-ops rather than warning
+        !! targets so matplotlib-style code remains quiet.
         character(len=*), intent(in) :: filename
         integer, intent(in), optional :: dpi
         logical, intent(in), optional :: transparent
         character(len=*), intent(in), optional :: bbox_inches
 
         call ensure_global_figure_initialized()
+        call apply_savefig_dpi(dpi)
+        call consume_savefig_stubs(transparent, bbox_inches)
         call fig%savefig(filename)
-        if (present(dpi) .or. present(transparent) .or. present(bbox_inches)) then
-            call log_warning("savefig: backend ignores dpi/transparent/bbox settings")
-        end if
     end subroutine savefig
 
     subroutine savefig_with_status(filename, status, dpi, transparent, bbox_inches)
-        !! Save figure and return status code for testing scenarios
+        !! Save figure and return status code for testing scenarios.
+        !! Applies `dpi` and silently accepts `transparent`/`bbox_inches`.
         character(len=*), intent(in) :: filename
         integer, intent(out) :: status
         integer, intent(in), optional :: dpi
@@ -261,12 +299,33 @@ contains
         character(len=*), intent(in), optional :: bbox_inches
 
         call ensure_global_figure_initialized()
+        call apply_savefig_dpi(dpi)
+        call consume_savefig_stubs(transparent, bbox_inches)
         call fig%savefig_with_status(filename, status)
-        if (present(dpi) .or. present(transparent) .or. present(bbox_inches)) then
-            call log_warning( &
-                "savefig_with_status: backend ignores dpi/transparent/bbox settings")
-        end if
     end subroutine savefig_with_status
+
+    subroutine apply_savefig_dpi(dpi)
+        !! Propagate an explicit DPI value into figure state so rendering
+        !! honours it. A non-positive value is rejected via log_error so the
+        !! caller sees the problem without aborting the save.
+        integer, intent(in), optional :: dpi
+
+        if (.not. present(dpi)) return
+        if (dpi <= 0) then
+            call log_error('savefig: dpi must be positive; ignoring request')
+            return
+        end if
+        call fig%set_dpi(real(dpi, wp))
+    end subroutine apply_savefig_dpi
+
+    subroutine consume_savefig_stubs(transparent, bbox_inches)
+        !! Accept transparent/bbox_inches without side effects. Placeholder
+        !! until raster/vector backends gain explicit support.
+        logical, intent(in), optional :: transparent
+        character(len=*), intent(in), optional :: bbox_inches
+        if (present(transparent)) continue
+        if (present(bbox_inches)) continue
+    end subroutine consume_savefig_stubs
 
     subroutine show_data(x, y, label, title_text, xlabel_text, ylabel_text, blocking)
         !! Convenience routine mirroring matplotlib.pyplot.show signature with data
@@ -334,7 +393,7 @@ contains
         call launch_system_viewer(trim(temp_file), success)
         if (.not. success) then
             call log_error("Failed to launch image viewer")
-            call safe_remove_file(trim(temp_file), success)
+            call delete_file_runtime(trim(temp_file), success)
             return
         end if
 
@@ -350,7 +409,7 @@ contains
             call sleep_fortran(1000)
         end if
 
-        call safe_remove_file(trim(temp_file), success)
+        call delete_file_runtime(trim(temp_file), success)
     end subroutine show_viewer_implementation
 
     function is_gui_available() result(gui_available)

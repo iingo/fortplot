@@ -16,10 +16,13 @@ module fortplot_figure_rendering_pipeline
                                   PLOT_TYPE_QUIVER, PLOT_TYPE_POLAR, &
                                   AXIS_PRIMARY, AXIS_TWINX, AXIS_TWINY
     use fortplot_figure_initialization, only: figure_state_t
-    use fortplot_raster_axes, only: raster_draw_secondary_y_axis, &
-                                    raster_draw_secondary_x_axis_top, &
-                                    raster_draw_x_minor_ticks, &
-                                    raster_draw_y_minor_ticks
+  use fortplot_raster_axes, only: raster_draw_secondary_y_axis, &
+                                     raster_draw_secondary_x_axis_top, &
+                                     raster_draw_x_minor_ticks, &
+                                     raster_draw_y_minor_ticks
+    use fortplot_ascii, only: ascii_context
+    use fortplot_ascii_secondary_axes, only: ascii_draw_secondary_y_axis, &
+                                             ascii_draw_secondary_x_axis_top
     use fortplot_tick_calculation, only: calculate_minor_tick_positions, &
                                          calculate_log_minor_tick_positions
     use fortplot_axes, only: compute_scale_ticks, MAX_TICKS
@@ -44,21 +47,64 @@ module fortplot_figure_rendering_pipeline
     public :: render_figure_axes_labels_only, render_title_only
     public :: render_polar_axes
 
+    real(wp), parameter :: DATA_RANGE_MARGIN = 0.05_wp
+
 contains
 
     subroutine setup_coordinate_system(backend, x_min_transformed, x_max_transformed, &
                                        y_min_transformed, y_max_transformed)
         !! Setup the coordinate system for rendering
+        !! Adds a small margin to data ranges to prevent boundary data from
+        !! being clipped by the plot frame stroke.
+        use fortplot_pdf, only: pdf_context
+        use fortplot_raster, only: raster_context
         class(plot_context), intent(inout) :: backend
         real(wp), intent(in) :: x_min_transformed, x_max_transformed
         real(wp), intent(in) :: y_min_transformed, y_max_transformed
 
-        ! Set data ranges directly on backend
-        backend%x_min = x_min_transformed
-        backend%x_max = x_max_transformed
-        backend%y_min = y_min_transformed
-        backend%y_max = y_max_transformed
+        real(wp) :: x_min_adj, x_max_adj, y_min_adj, y_max_adj
+
+        ! Apply small margin to prevent boundary clipping
+        select type (bk => backend)
+        class is (pdf_context)
+            call expand_data_range(x_min_transformed, x_max_transformed, &
+                                   x_min_adj, x_max_adj)
+            call expand_data_range(y_min_transformed, y_max_transformed, &
+                                   y_min_adj, y_max_adj)
+            call bk%set_coordinates(x_min_adj, x_max_adj, y_min_adj, y_max_adj)
+        class is (raster_context)
+            call expand_data_range(x_min_transformed, x_max_transformed, &
+                                   x_min_adj, x_max_adj)
+            call expand_data_range(y_min_transformed, y_max_transformed, &
+                                   y_min_adj, y_max_adj)
+            call bk%set_coordinates(x_min_adj, x_max_adj, y_min_adj, y_max_adj)
+        class default
+            call backend%set_coordinates(x_min_transformed, x_max_transformed, &
+                                         y_min_transformed, y_max_transformed)
+        end select
     end subroutine setup_coordinate_system
+
+    subroutine expand_data_range(data_min, data_max, expanded_min, expanded_max)
+        !! Expand a data range by DATA_RANGE_MARGIN (5%) on each side,
+        !! keeping the range center fixed. Prevents markers at exact boundaries
+        !! from being clipped by the plot frame stroke.
+        real(wp), intent(in) :: data_min, data_max
+        real(wp), intent(out) :: expanded_min, expanded_max
+        real(wp) :: center, half_range
+
+        if (data_max <= data_min) then
+            expanded_min = data_min
+            expanded_max = data_max
+            return
+        end if
+
+        center = 0.5_wp*(data_min + data_max)
+        half_range = 0.5_wp*(data_max - data_min)
+        half_range = half_range*(1.0_wp + DATA_RANGE_MARGIN)
+
+        expanded_min = center - half_range
+        expanded_max = center + half_range
+    end subroutine expand_data_range
 
     subroutine render_figure_background(backend)
         !! Render figure background
@@ -395,10 +441,24 @@ contains
                         date_format=twiny_x_date_format)
                 end if
             end if
+        class is (ascii_context)
+            if (.not. has_3d) then
+                if (has_twinx_local) then
+                    call ascii_draw_secondary_y_axis(backend, twinx_scale_local, &
+                        symlog_threshold, twinx_y_min_local, twinx_y_max_local, &
+                        twinx_ylabel, date_format=twinx_y_date_format)
+                end if
+                if (has_twiny_local) then
+                    call ascii_draw_secondary_x_axis_top(backend, twiny_scale_local, &
+                        symlog_threshold, twiny_x_min_local, twiny_x_max_local, &
+                        twiny_xlabel, date_format=twiny_x_date_format)
+                end if
+            end if
         end select
     end subroutine render_figure_axes_labels_only
 
-    subroutine render_title_only(backend, title, x_min, x_max, y_min, y_max)
+    subroutine render_title_only(backend, title, x_min, x_max, y_min, y_max, &
+                                 custom_title_font_size)
         !! Render only the figure title without drawing axes
         use fortplot_raster, only: raster_context
         use fortplot_raster_labels, only: render_title_centered
@@ -409,6 +469,7 @@ contains
         class(plot_context), intent(inout) :: backend
         character(len=:), allocatable, intent(in) :: title
         real(wp), intent(in) :: x_min, x_max, y_min, y_max
+        real(wp), intent(in), optional :: custom_title_font_size
         real(wp) :: y_span, y_pos, x_pos
 
         if (.not. allocated(title)) return
@@ -416,8 +477,9 @@ contains
 
         select type (backend)
         class is (raster_context)
-            call render_title_centered(backend%raster, backend%width, backend%height, &
-                                       backend%plot_area, trim(title))
+            call render_title_centered(backend%raster, backend%width, &
+                backend%height, backend%plot_area, trim(title), &
+                custom_title_font_size)
             return
         class is (pdf_context)
             block
@@ -534,7 +596,7 @@ contains
             primary_y_max = state%y_max_transformed
             default_line_width = state%current_line_width
         else
-            default_line_width = 1.0_wp
+            default_line_width = 1.5_wp
         end if
 
         do i = 1, plot_count
@@ -882,7 +944,7 @@ contains
         radius = min(x_max - x_min, y_max - y_min)*0.45_wp
 
         ! Get polar configuration from state
-        theta_offset = 1.5707963267948966_wp  ! pi/2
+        theta_offset = 0.0_wp  ! 0 deg at east (matplotlib)
         clockwise = .false.
         if (present(state)) then
             theta_offset = state%polar_theta_offset

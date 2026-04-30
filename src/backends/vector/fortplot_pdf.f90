@@ -16,7 +16,7 @@ module fortplot_pdf
     use fortplot_plot_data, only: plot_data_t
     use fortplot_latex_parser, only: process_latex_in_text
     use fortplot_margins, only: plot_margins_t, plot_area_t, calculate_plot_area
-    use fortplot_constants, only: EPSILON_COMPARE
+    use fortplot_constants, only: EPSILON_COMPARE, REFERENCE_DPI
     use, intrinsic :: iso_fortran_env, only: wp => real64
     use fortplot_colormap, only: colormap_value_to_color
     use fortplot_logging, only: log_error, log_info
@@ -37,6 +37,11 @@ module fortplot_pdf
         integer :: x_tick_count = 0
         integer :: y_tick_count = 0
         logical, private :: axes_rendered = .false.
+        ! Custom tick support (set_xticks / set_yticks)
+        real(wp), allocatable :: custom_xtick_positions(:)
+        real(wp), allocatable :: custom_ytick_positions(:)
+        character(len=50), allocatable :: custom_xtick_labels(:)
+        character(len=50), allocatable :: custom_ytick_labels(:)
     contains
         procedure :: line => draw_pdf_line
         procedure :: color => set_pdf_color
@@ -84,8 +89,8 @@ contains
         real(wp) :: width_pts, height_pts
         integer :: width_pts_i, height_pts_i
 
-        width_pts = real(width, wp)*72.0_wp/100.0_wp
-        height_pts = real(height, wp)*72.0_wp/100.0_wp
+        width_pts = real(width, wp)*72.0_wp/REFERENCE_DPI
+        height_pts = real(height, wp)*72.0_wp/REFERENCE_DPI
         ! Use integer canvas for downstream plot-area computations
         width_pts_i = max(1, nint(width_pts))
         height_pts_i = max(1, nint(height_pts))
@@ -471,10 +476,11 @@ contains
         end if
     end subroutine fill_quad_wrapper
 
-    subroutine fill_heatmap_wrapper(this, x_grid, y_grid, z_grid, z_min, z_max)
+    subroutine fill_heatmap_wrapper(this, x_grid, y_grid, z_grid, z_min, z_max, colormap_name)
         class(pdf_context), intent(inout) :: this
         real(wp), intent(in) :: x_grid(:), y_grid(:), z_grid(:, :)
         real(wp), intent(in) :: z_min, z_max
+        character(len=*), intent(in), optional :: colormap_name
 
         integer :: i, j, nx, ny, W, H
         real(wp) :: value
@@ -512,7 +518,11 @@ contains
                     src_i = max(1, min(W, ii-1))
                     src_j = max(1, min(H, jj-1))
                     value = z_grid(src_j, src_i)
-                    call colormap_value_to_color(value, z_min, z_max, 'viridis', color)
+                    if (present(colormap_name)) then
+                        call colormap_value_to_color(value, z_min, z_max, trim(colormap_name), color)
+                    else
+                        call colormap_value_to_color(value, z_min, z_max, 'viridis', color)
+                    end if
                     v1 = max(0.0d0, min(1.0d0, color(1)))
                     v2 = max(0.0d0, min(1.0d0, color(2)))
                     v3 = max(0.0d0, min(1.0d0, color(3)))
@@ -666,7 +676,11 @@ contains
                                           plot_area_width=real(this%plot_area%width, &
                                                                wp), &
                                           plot_area_height=real(this%plot_area%height, &
-                                                                wp))
+                                                                wp), &
+                                          custom_xticks=this%custom_xtick_positions, &
+                                          custom_xtick_labels=this%custom_xtick_labels, &
+                                          custom_yticks=this%custom_ytick_positions, &
+                                          custom_ytick_labels=this%custom_ytick_labels)
         end if
     end subroutine draw_axes_and_labels_backend_wrapper
 

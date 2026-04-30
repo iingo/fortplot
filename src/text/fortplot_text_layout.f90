@@ -1,6 +1,6 @@
 module fortplot_text_layout
     !! Shared text layout utilities (width/height calculations, mathtext helpers)
-    use fortplot_stb_truetype
+    use fortplot_truetype
     use fortplot_unicode, only: utf8_to_codepoint, utf8_char_length
     use fortplot_logging, only: log_error
     use fortplot_text_fonts, only: init_text_system, get_global_font, get_font_scale, &
@@ -14,13 +14,15 @@ module fortplot_text_layout
     public :: has_mathtext
     public :: preprocess_math_text
     public :: calculate_text_width, calculate_text_width_with_size, calculate_text_height
+    public :: calculate_text_height_with_size
     public :: calculate_text_descent
     public :: calculate_mathtext_width_internal, calculate_text_width_with_size_internal
     public :: calculate_text_height_with_size_internal, calculate_mathtext_height_internal
-    public :: DEFAULT_FONT_SIZE, TITLE_FONT_SIZE, LABEL_FONT_SIZE, TICK_FONT_SIZE
+    public :: DEFAULT_FONT_SIZE, TITLE_FONT_SIZE, TITLE_FONT_SIZE_PT, LABEL_FONT_SIZE, TICK_FONT_SIZE
 
     integer, parameter :: DEFAULT_FONT_SIZE = 16  ! ~12pt at 96 DPI
     integer, parameter :: TITLE_FONT_SIZE = 20     ! ~15pt at 96 DPI
+    real(wp), parameter :: TITLE_FONT_SIZE_PT = 14.0_wp  ! Title font size in points (matplotlib default)
     integer, parameter :: LABEL_FONT_SIZE = 16     ! ~12pt at 96 DPI
     integer, parameter :: TICK_FONT_SIZE = 13      ! ~10pt at 96 DPI
 
@@ -48,7 +50,7 @@ contains
         integer :: width
         integer :: i, char_code, advance_width, left_side_bearing
         integer :: char_len
-        type(stb_fontinfo_t) :: font
+        type(truetype_font_t) :: font
         real(wp) :: scale
         type(mathtext_element_t), allocatable :: elements(:)
         integer :: ix0, iy0, ix1, iy1
@@ -89,11 +91,9 @@ contains
                 i = i + char_len
             end if
 
-            call stb_get_codepoint_bitmap_box(font, char_code, scale, scale, &
-                ix0, iy0, ix1, iy1)
+            call font%get_bitmap_box(char_code, scale, scale, ix0, iy0, ix1, iy1)
             rightmost = max(rightmost, pen_px + ix1)
-            call stb_get_codepoint_hmetrics(font, char_code, advance_width, &
-                left_side_bearing)
+            call font%get_hmetrics(char_code, advance_width, left_side_bearing)
             pen_px = pen_px + int(real(advance_width) * scale)
         end do
         width = max(pen_px, rightmost)
@@ -132,7 +132,7 @@ contains
         character(len=*), intent(in) :: text
         integer :: height
         integer :: ascent, descent, line_gap
-        type(stb_fontinfo_t) :: font
+        type(truetype_font_t) :: font
         real(wp) :: scale
         type(mathtext_element_t), allocatable :: elements(:)
         character(len=4096) :: processed
@@ -156,18 +156,25 @@ contains
         font = get_global_font()
         scale = get_font_scale()
 
-        call stb_get_font_vmetrics(font, ascent, descent, line_gap)
+        call font%get_vmetrics(ascent, descent, line_gap)
         height = int(real(ascent - descent) * scale)
 
         if (height <= 0) height = DEFAULT_FONT_SIZE
     end function calculate_text_height
+
+    function calculate_text_height_with_size(pixel_height) result(height)
+        !! Calculate text height for a given font pixel size
+        real(wp), intent(in) :: pixel_height
+        integer :: height
+        height = calculate_text_height_with_size_internal(pixel_height)
+    end function calculate_text_height_with_size
 
     function calculate_text_descent(text) result(descent_pixels)
         !! Calculate the descent (below baseline) portion of text in pixels
         character(len=*), intent(in) :: text
         integer :: descent_pixels
         integer :: ascent, descent, line_gap
-        type(stb_fontinfo_t) :: font
+        type(truetype_font_t) :: font
         real(wp) :: scale
 
         associate(unused_text => text); end associate
@@ -182,7 +189,7 @@ contains
         font = get_global_font()
         scale = get_font_scale()
 
-        call stb_get_font_vmetrics(font, ascent, descent, line_gap)
+        call font%get_vmetrics(ascent, descent, line_gap)
         descent_pixels = int(abs(real(descent) * scale))
         if (descent_pixels <= 0) descent_pixels = 4
     end function calculate_text_descent
@@ -216,10 +223,11 @@ contains
 
     subroutine preprocess_math_text(input_text, result_text, result_len)
         !! Remove '$' delimiters and escape '^'/'_' outside math so they render literally
+        !! UTF-8 aware: multi-byte characters are copied as intact sequences
         character(len=*), intent(in) :: input_text
         character(len=*), intent(out) :: result_text
         integer, intent(out) :: result_len
-        integer :: i, n, pos
+        integer :: i, n, pos, char_len
         logical :: in_math
         character(len=1) :: ch
 
@@ -231,26 +239,39 @@ contains
 
         i = 1
         do while (i <= n)
-            ch = input_text(i:i)
-            if (ch == '$') then
-                in_math = .not. in_math
-                i = i + 1
-                cycle
-            end if
+            char_len = utf8_char_length(input_text(i:i))
+            if (char_len <= 0) char_len = 1
 
-            if (.not. in_math .and. (ch == '_' .or. ch == '^')) then
-                ! Escape to prevent math parsing
-                result_text(pos:pos) = '\'
-                pos = pos + 1
+            if (char_len == 1) then
+                ch = input_text(i:i)
+                if (ch == '$') then
+                    in_math = .not. in_math
+                    i = i + 1
+                    cycle
+                end if
+
+                if (.not. in_math .and. (ch == '_' .or. ch == '^')) then
+                    ! Escape to prevent math parsing
+                    result_text(pos:pos) = '\'
+                    pos = pos + 1
+                    result_text(pos:pos) = ch
+                    pos = pos + 1
+                    i = i + 1
+                    cycle
+                end if
+
                 result_text(pos:pos) = ch
                 pos = pos + 1
                 i = i + 1
-                cycle
+            else
+                ! Multi-byte UTF-8 character: copy entire sequence intact
+                if (pos + char_len - 1 <= len(result_text)) then
+                    result_text(pos:pos + char_len - 1) = &
+                        input_text(i:i + char_len - 1)
+                    pos = pos + char_len
+                end if
+                i = i + char_len
             end if
-
-            result_text(pos:pos) = ch
-            pos = pos + 1
-            i = i + 1
         end do
 
         result_len = pos - 1
@@ -265,7 +286,7 @@ contains
         integer :: width
         integer :: i, char_code, advance_width, left_side_bearing
         integer :: char_len, text_len
-        type(stb_fontinfo_t) :: font
+        type(truetype_font_t) :: font
         real(wp) :: scale
         integer :: ix0, iy0, ix1, iy1
         integer :: pen_px, rightmost
@@ -296,11 +317,9 @@ contains
                 i = i + char_len
             end if
 
-            call stb_get_codepoint_bitmap_box(font, char_code, scale, scale, &
-                ix0, iy0, ix1, iy1)
+            call font%get_bitmap_box(char_code, scale, scale, ix0, iy0, ix1, iy1)
             rightmost = max(rightmost, pen_px + ix1)
-            call stb_get_codepoint_hmetrics(font, char_code, advance_width, &
-                left_side_bearing)
+            call font%get_hmetrics(char_code, advance_width, left_side_bearing)
             pen_px = pen_px + int(real(advance_width) * scale)
         end do
         width = max(pen_px, rightmost)

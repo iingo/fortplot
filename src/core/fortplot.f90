@@ -44,10 +44,10 @@ module fortplot
     !!   ! Advanced figure with multiple plots
     !!   type(figure_t) :: fig
     !!   call fig%initialize(800, 600)
-    !!   call figure_add_plot(fig, x, y, label="data", linestyle='b-o')
-    !!   call figure_add_contour(fig, x_grid, y_grid, z_field)
-    !!   call figure_legend(fig)
-    !!   call figure_savefig(fig, 'results.pdf')
+    !!   call fig%add_plot(x, y, label="data", linestyle='b-o')
+    !!   call fig%add_contour(x_grid, y_grid, z_field)
+    !!   call fig%legend()
+    !!   call fig%savefig('results.pdf')
     !!
     !! Author: fortplot contributors
 
@@ -86,25 +86,40 @@ module fortplot
     ! Annotation functionality with coordinate constants
     use fortplot_annotations, only: COORD_DATA, COORD_FIGURE, COORD_AXIS
 
+    ! Vega-Lite spec types and builder API
+    use fortplot_spec_types, only: spec_t, mark_t, encoding_t, channel_t, &
+                                   data_t, data_column_t, scale_t, axis_t, &
+                                   layer_t
+    use fortplot_spec_builder, only: vl_line, vl_point, vl_bar, vl_area, &
+                                     vl_layer_add, vl_channel, spec_savefig
+    use fortplot_spec_frontend_adapters, only: figure_to_spec
+    use fortplot_spec_json, only: spec_to_json, spec_to_json_file, &
+                                   escape_json_string
+    use fortplot_spec_json_parse, only: json_to_spec
+
     ! Matplotlib-compatible API (all pyplot-style functions)
-    use fortplot_matplotlib, only: plot, contour, contour_filled, pcolormesh, &
-                                   streamplot, quiver, add_quiver, &
-                                   hist, histogram, scatter, errorbar, boxplot, &
-                                   bar, barh, text, annotate, &
-                                   imshow, pie, polar, step, stem, &
-                                   fill, fill_between, twinx, twiny, colorbar, &
-                                   xlabel, ylabel, title, suptitle, legend, grid, &
-                                   savefig, savefig_with_status, figure, subplot, &
-                                   subplots, subplots_grid, &
-                                   add_plot, add_contour, add_contour_filled, &
-                                   add_pcolormesh, add_errorbar, &
-                                   add_3d_plot, add_surface, add_scatter, &
-                                   set_xscale, set_yscale, xlim, ylim, &
-                                   set_line_width, set_ydata, use_axis, &
-                                   get_active_axis, minorticks_on, &
-                                   show, show_viewer, &
-                                   ion, ioff, draw, pause, &
-                                   ensure_global_figure_initialized, get_global_figure
+    use fortplot_matplotlib, only: plot, contour, contour_filled, contourf, &
+                                    pcolormesh, streamplot, quiver, add_quiver, &
+                                    hist, histogram, scatter, errorbar, boxplot, &
+                                    bar, barh, text, annotate, &
+                                    imshow, pie, polar, step, stem, &
+                                    fill, fill_between, twinx, twiny, colorbar, &
+                                    xlabel, ylabel, title, suptitle, legend, grid, &
+                                    savefig, savefig_with_status, figure, subplot, &
+                                    subplots, subplots_grid, &
+                                    add_plot, add_contour, add_contour_filled, &
+                                    add_contourf, &
+                                    add_pcolormesh, add_errorbar, &
+                                    add_3d_plot, add_surface, add_scatter, &
+                                    set_xscale, set_yscale, xscale, yscale, &
+                                    xlim, ylim, &
+                                    set_line_width, set_ydata, use_axis, &
+                                    get_active_axis, minorticks_on, &
+                                    axhline, axvline, hlines, vlines, &
+                                    set_xticks, set_yticks, &
+                                    show, show_viewer, &
+                                    ion, ioff, draw, pause, &
+                                    ensure_global_figure_initialized, get_global_figure
 
     implicit none
     private
@@ -125,7 +140,8 @@ module fortplot
     public :: COORD_DATA, COORD_FIGURE, COORD_AXIS
 
     ! Matplotlib-compatible plotting functions
-    public :: plot, contour, contour_filled, pcolormesh, streamplot, quiver
+    public :: plot, contour, contour_filled, contourf, pcolormesh
+    public :: streamplot, quiver
     public :: add_quiver
     public :: hist, histogram, scatter, errorbar, boxplot
     public :: bar, barh
@@ -133,16 +149,19 @@ module fortplot
     public :: fill, fill_between, twinx, twiny
     public :: colorbar
     public :: text, annotate
+    public :: axhline, axvline, hlines, vlines
 
     ! Figure management and configuration
     public :: figure, subplot, subplots, subplots_grid
     public :: xlabel, ylabel, title, suptitle, legend, grid
-    public :: xlim, ylim, set_xscale, set_yscale
+    public :: xlim, ylim, set_xscale, set_yscale, xscale, yscale
     public :: set_line_width, set_ydata, use_axis, get_active_axis, minorticks_on
+    public :: set_xticks, set_yticks
     public :: savefig, savefig_with_status
 
     ! Extended plotting functions
-    public :: add_plot, add_contour, add_contour_filled, add_pcolormesh
+    public :: add_plot, add_contour, add_contour_filled, add_contourf
+    public :: add_pcolormesh
     public :: add_errorbar, add_3d_plot, add_surface, add_scatter
 
     ! Display functions
@@ -173,6 +192,17 @@ module fortplot
 
     ! Contour region extraction interface
     public :: contour_region_t, contour_polygon_t, extract_contour_regions
+
+    ! Vega-Lite spec types
+    public :: spec_t, mark_t, encoding_t, channel_t
+    public :: data_t, data_column_t, scale_t, axis_t, layer_t
+
+    ! Vega-Lite builder API
+    public :: vl_line, vl_point, vl_bar, vl_area
+    public :: vl_layer_add, vl_channel
+    public :: spec_savefig, figure_to_spec
+    public :: spec_to_json, spec_to_json_file, json_to_spec
+    public :: escape_json_string
 
     ! =========================================================================
     ! STYLE CONSTANTS (matplotlib-compatible)

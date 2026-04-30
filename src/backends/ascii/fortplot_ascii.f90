@@ -9,7 +9,7 @@ module fortplot_ascii
 
     use fortplot_context, only: plot_context, setup_canvas
     use fortplot_logging, only: log_info, log_error
-    use fortplot_latex_parser, only: process_latex_in_text
+    use fortplot_ascii_mathtext, only: sanitize_ascii_text
     use fortplot_constants, only: EPSILON_COMPARE
     use fortplot_ascii_utils, only: text_element_t, get_char_density, get_blend_char, &
                                     ASCII_CHARS
@@ -62,6 +62,10 @@ module fortplot_ascii
         character(len=16) :: last_xscale = 'linear'
         character(len=16) :: last_yscale = 'linear'
         real(wp) :: last_symlog_threshold = 1.0_wp
+        !! Optional custom x-tick positions/labels forwarded by the render
+        !! engine so the ASCII axis honours ``set_xticks`` (issue #1714).
+        real(wp), allocatable :: custom_xtick_positions(:)
+        character(len=64), allocatable :: custom_xtick_labels(:)
     contains
         procedure :: line => ascii_draw_line
         procedure :: color => ascii_set_color
@@ -110,15 +114,28 @@ contains
         type(ascii_context) :: ctx
         integer :: w, h
 
-        ! Suppress unused parameter warnings
-        associate (unused_w => width, unused_h => height); end associate
-
-        ! ASCII backend uses a 4:3 aspect ratio, accounting for terminal character
-        ! dimensions.
-        ! Terminal characters are taller than they are wide; a 24-row canvas keeps the
-        ! legend heuristics inside ASCII mode while preserving enough vertical space.
-        w = 80
-        h = 24
+        ! Use caller-specified dimensions, scaling pixel values to characters.
+        ! Values <= 200 are treated as direct character counts (e.g. dpi=1).
+        ! Larger values are assumed to be pixels and scaled down, accounting
+        ! for the ~2:1 character aspect ratio (chars are taller than wide).
+        if (present(width) .and. width > 0) then
+            if (width > 200) then
+                w = max(80, min(120, nint(real(width, wp) / 10.0_wp)))
+            else
+                w = width
+            end if
+        else
+            w = 80
+        end if
+        if (present(height) .and. height > 0) then
+            if (height > 60) then
+                h = max(20, min(30, nint(real(height, wp) / 20.0_wp)))
+            else
+                h = height
+            end if
+        else
+            h = 24
+        end if
 
         call setup_canvas(ctx, w, h)
 
@@ -186,19 +203,48 @@ contains
     end subroutine ascii_set_line_style
 
     subroutine ascii_draw_text(this, x, y, text)
+        !! Store a text element at the given position. Coordinates in the
+        !! range [1, plot_width] x [1, plot_height] are treated as screen
+        !! coordinates (legend helpers work that way); otherwise the input
+        !! is projected from data coordinates onto the canvas so callers
+        !! that pass world-space positions (polar tick labels, annotations,
+        !! secondary-axis labels) render at the correct location.
         class(ascii_context), intent(inout) :: this
         real(wp), intent(in) :: x, y
         character(len=*), intent(in) :: text
 
-        if (this%num_text_elements < size(this%text_elements)) then
-            this%num_text_elements = this%num_text_elements + 1
-            this%text_elements(this%num_text_elements)%text = trim(text)
-            this%text_elements(this%num_text_elements)%x = nint(x)
-            this%text_elements(this%num_text_elements)%y = nint(y)
-            this%text_elements(this%num_text_elements)%color_r = this%current_r
-            this%text_elements(this%num_text_elements)%color_g = this%current_g
-            this%text_elements(this%num_text_elements)%color_b = this%current_b
+        character(len=500) :: processed_text
+        integer :: processed_len, text_x, text_y, pw, ph
+
+        if (this%num_text_elements >= size(this%text_elements)) return
+
+        call sanitize_ascii_text(text, processed_text, processed_len)
+
+        pw = this%plot_width
+        ph = this%plot_height
+        if (x >= 1.0_wp .and. x <= real(pw, wp) .and. &
+            y >= 1.0_wp .and. y <= real(ph, wp)) then
+            text_x = nint(x)
+            text_y = nint(y)
+        else if (this%x_max > this%x_min .and. this%y_max > this%y_min) then
+            text_x = nint((x - this%x_min)/(this%x_max - this%x_min)*real(pw, wp))
+            text_y = nint((this%y_max - y)/(this%y_max - this%y_min)*real(ph, wp))
+        else
+            text_x = nint(x)
+            text_y = nint(y)
         end if
+
+        text_x = max(2, min(text_x, max(2, pw - processed_len - 1)))
+        text_y = max(1, min(text_y, ph))
+
+        this%num_text_elements = this%num_text_elements + 1
+        this%text_elements(this%num_text_elements)%text = &
+            processed_text(1:processed_len)
+        this%text_elements(this%num_text_elements)%x = text_x
+        this%text_elements(this%num_text_elements)%y = text_y
+        this%text_elements(this%num_text_elements)%color_r = this%current_r
+        this%text_elements(this%num_text_elements)%color_g = this%current_g
+        this%text_elements(this%num_text_elements)%color_b = this%current_b
     end subroutine ascii_draw_text
 
     subroutine ascii_set_title(this, title)
@@ -208,8 +254,8 @@ contains
         character(len=500) :: processed_title
         integer :: processed_len
 
-        ! Process LaTeX commands in title
-        call process_latex_in_text(title, processed_title, processed_len)
+        ! Normalize title for the ASCII canvas.
+        call sanitize_ascii_text(title, processed_title, processed_len)
         this%title_text = processed_title(1:processed_len)
         this%title_set = .true.
     end subroutine ascii_set_title
@@ -264,10 +310,16 @@ contains
         ! This is a stub implementation for interface compliance
     end subroutine ascii_set_marker_colors_with_alpha
 
-    subroutine ascii_fill_heatmap(this, x_grid, y_grid, z_grid, z_min, z_max)
+    subroutine ascii_fill_heatmap(this, x_grid, y_grid, z_grid, z_min, z_max, colormap_name)
         class(ascii_context), intent(inout) :: this
         real(wp), intent(in) :: x_grid(:), y_grid(:), z_grid(:, :)
         real(wp), intent(in) :: z_min, z_max
+        character(len=*), intent(in), optional :: colormap_name
+
+        ! Suppress unused parameter warning
+        if (present(colormap_name)) then
+            ! colormap_name is accepted for interface compliance but not used in ASCII rendering
+        end if
 
         call fill_ascii_heatmap(this%canvas, x_grid, y_grid, z_grid, z_min, z_max, &
                                 this%x_min, this%x_max, this%y_min, this%y_max, &
@@ -337,8 +389,9 @@ contains
         type(legend_t), intent(in) :: legend
         real(wp), intent(in) :: legend_x, legend_y
 
-        integer :: i
+        integer :: i, label_len
         character(len=96) :: line_buffer
+        character(len=256) :: sanitized_label
         character(len=:), allocatable :: label_text
         character(len=1) :: marker_char
 
@@ -354,7 +407,9 @@ contains
 
         do i = 1, legend%num_entries
             if (allocated(legend%entries(i)%label)) then
-                label_text = trim(legend%entries(i)%label)
+                call sanitize_ascii_text(legend%entries(i)%label, sanitized_label, &
+                                         label_len)
+                label_text = sanitized_label(1:label_len)
             else
                 label_text = ''
             end if
@@ -405,7 +460,7 @@ contains
     subroutine ascii_calculate_legend_position(this, legend, x, y)
         !! Calculate ASCII-specific legend position using character coordinates
         use fortplot_legend, only: legend_t, LEGEND_UPPER_LEFT, LEGEND_UPPER_RIGHT, &
-                                   LEGEND_LOWER_LEFT, LEGEND_LOWER_RIGHT
+                                   LEGEND_LOWER_LEFT, LEGEND_LOWER_RIGHT, LEGEND_EAST
         class(ascii_context), intent(in) :: this
         type(legend_t), intent(in) :: legend
         real(wp), intent(out) :: x, y
@@ -433,6 +488,9 @@ contains
         case (LEGEND_LOWER_RIGHT)
             x = real(this%width, wp) - legend_width - margin_x
             y = real(this%height, wp) - legend_height - margin_y
+        case (LEGEND_EAST)
+            x = real(this%width, wp) - legend_width - margin_x
+            y = (real(this%height, wp) - legend_height)*0.5_wp
         case default
             ! Default to upper right corner
             x = real(this%width, wp) - legend_width - margin_x
@@ -510,18 +568,40 @@ contains
         this%last_yscale = trim(yscale)
         this%last_symlog_threshold = symlog_threshold
 
-        ! Call the module version with all required parameters
-        call draw_ascii_axes_and_labels(this%canvas, xscale, yscale, symlog_threshold, &
-                                        x_min, x_max, y_min, y_max, &
-                                        title, xlabel, ylabel, &
-                                        x_date_format, y_date_format, &
-                                        z_min, z_max, has_3d_plots, &
-                                        this%current_r, this%current_g, &
-                                        this%current_b, &
-                                        this%plot_width, this%plot_height, &
-                                        this%title_text, this%xlabel_text, &
-                                        this%ylabel_text, &
-                                        this%text_elements, this%num_text_elements)
+        if (allocated(this%custom_xtick_positions) .and. &
+            allocated(this%custom_xtick_labels)) then
+            call draw_ascii_axes_and_labels(this%canvas, xscale, yscale, &
+                                            symlog_threshold, &
+                                            x_min, x_max, y_min, y_max, &
+                                            title, xlabel, ylabel, &
+                                            x_date_format, y_date_format, &
+                                            z_min, z_max, has_3d_plots, &
+                                            this%current_r, this%current_g, &
+                                            this%current_b, &
+                                            this%plot_width, this%plot_height, &
+                                            this%title_text, this%xlabel_text, &
+                                            this%ylabel_text, &
+                                            this%text_elements, &
+                                            this%num_text_elements, &
+                                            custom_xticks= &
+                                                this%custom_xtick_positions, &
+                                            custom_xtick_labels= &
+                                                this%custom_xtick_labels)
+        else
+            call draw_ascii_axes_and_labels(this%canvas, xscale, yscale, &
+                                            symlog_threshold, &
+                                            x_min, x_max, y_min, y_max, &
+                                            title, xlabel, ylabel, &
+                                            x_date_format, y_date_format, &
+                                            z_min, z_max, has_3d_plots, &
+                                            this%current_r, this%current_g, &
+                                            this%current_b, &
+                                            this%plot_width, this%plot_height, &
+                                            this%title_text, this%xlabel_text, &
+                                            this%ylabel_text, &
+                                            this%text_elements, &
+                                            this%num_text_elements)
+        end if
     end subroutine ascii_draw_axes_and_labels
 
     subroutine ascii_save_coordinates(this, x_min, x_max, y_min, y_max)
@@ -599,7 +679,8 @@ contains
         character(len=64), intent(out) :: entry_label
 
         character(len=:), allocatable :: trimmed_text
-        integer :: first_space
+        character(len=256) :: sanitized
+        integer :: sanitized_len, first_space
 
         formatted_line = ''
         entry_label = ''
@@ -609,7 +690,8 @@ contains
 
         if (len(trimmed_text) >= 3 .and. trimmed_text(1:3) == '-- ') then
             if (len(trimmed_text) > 3) then
-                entry_label = trim(adjustl(trimmed_text(4:)))
+                call sanitize_ascii_text(trim(adjustl(trimmed_text(4:))), sanitized, sanitized_len)
+                entry_label = trim(sanitized(1:sanitized_len))
             else
                 entry_label = ''
             end if
@@ -618,9 +700,11 @@ contains
             formatted_line = '  '//trim(trimmed_text)
             first_space = index(trimmed_text, ' ')
             if (first_space > 0 .and. first_space < len(trimmed_text)) then
-                entry_label = trim(adjustl(trimmed_text(first_space + 1:)))
+                call sanitize_ascii_text(trim(adjustl(trimmed_text(first_space + 1:))), sanitized, sanitized_len)
+                entry_label = trim(sanitized(1:sanitized_len))
             else
-                entry_label = trim(trimmed_text)
+                call sanitize_ascii_text(trim(trimmed_text), sanitized, sanitized_len)
+                entry_label = trim(sanitized(1:sanitized_len))
             end if
         end if
     end subroutine decode_ascii_legend_line
@@ -631,9 +715,12 @@ contains
         character(len=*), intent(in), optional :: value_text
 
         character(len=96) :: line_buffer
+        character(len=256) :: sanitized
+        integer :: sanitized_len
         character(len=:), allocatable :: value_trimmed
 
-        line_buffer = '  '//trim(label)
+        call sanitize_ascii_text(label, sanitized, sanitized_len)
+        line_buffer = '  '//trim(sanitized(1:sanitized_len))
 
         if (present(value_text)) then
             value_trimmed = trim(value_text)
@@ -643,7 +730,7 @@ contains
         end if
 
         call append_ascii_legend_line_helper(this%legend_lines, this%num_legend_lines, &
-                                             trim(line_buffer))
+                                              trim(line_buffer))
     end subroutine ascii_add_legend_entry
 
     subroutine ascii_clear_pie_legend_entries(this)

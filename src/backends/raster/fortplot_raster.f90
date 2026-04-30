@@ -2,16 +2,14 @@ module fortplot_raster
     !! Main raster plotting context extracted into specialized modules
     use iso_c_binding
     use fortplot_context, only: plot_context, setup_canvas
-    use fortplot_constants, only: EPSILON_COMPARE
+    use fortplot_constants, only: EPSILON_COMPARE, REFERENCE_DPI
     use fortplot_bitmap, only: composite_bitmap_to_raster_0, get_text_bitmap_metrics, &
                                render_text_to_bitmap_with_size, &
                                rotate_bitmap_about_anchor
-    use fortplot_text, only: render_text_to_image, render_text_with_size, &
-                             calculate_text_width, calculate_text_width_with_size, &
+    use fortplot_text, only: calculate_text_width, calculate_text_width_with_size, &
                              calculate_text_height
-    use fortplot_latex_parser, only: process_latex_in_text
-    use fortplot_text_helpers, only: prepare_mathtext_if_needed
-    use fortplot_unicode, only: escape_unicode_for_raster
+    use fortplot_text_rendering, only: render_text_to_image, render_text_with_size
+    use fortplot_text_helpers, only: prepare_text_for_raster
     use fortplot_logging, only: log_error
     use fortplot_errors, only: fortplot_error_t, ERROR_INTERNAL
     use fortplot_margins, only: plot_margins_t, plot_area_t, calculate_plot_area
@@ -28,7 +26,7 @@ module fortplot_raster
     use fortplot_raster_line_styles, only: draw_styled_line, reset_pattern_distance, &
                                            set_raster_line_style
     use fortplot_raster_core, only: raster_image_t, create_raster_image, &
-                                    destroy_raster_image
+                                    destroy_raster_image, pt2px, scale_px
     use fortplot_raster_axes, only: raster_draw_axes_and_labels, raster_render_ylabel, &
                                     raster_draw_axes_lines_and_ticks, &
                                     raster_draw_axis_labels_only
@@ -98,13 +96,14 @@ module fortplot_raster
     end type raster_context
 
 contains
-    function create_raster_canvas(width, height) result(ctx)
+    function create_raster_canvas(width, height, dpi) result(ctx)
         integer, intent(in) :: width, height
+        real(wp), intent(in), optional :: dpi
         type(raster_context) :: ctx
 
         call setup_canvas(ctx, width, height)
 
-        ctx%raster = create_raster_image(width, height)
+        ctx%raster = create_raster_image(width, height, dpi)
         ctx%margins = plot_margins_t()  ! matplotlib-style margins
         call calculate_plot_area(width, height, ctx%margins, ctx%plot_area)
     end function create_raster_canvas
@@ -145,18 +144,17 @@ contains
     end subroutine raster_set_color_context
 
     subroutine raster_set_line_width(this, width)
-        !! Set line width for raster drawing with proper pixel scaling
+        !! Set line width for raster drawing with DPI-aware point-to-pixel scaling.
+        !! Input width is in points (1pt = 1/72 inch). Converted to pixels via DPI.
         class(raster_context), intent(inout) :: this
         real(wp), intent(in) :: width
+        real(wp) :: px
 
-        ! Map line width to pixel thickness with reasonable scaling
-        ! Use linear scaling: 1 point = 1 pixel for good visibility
         if (width <= 0.0_wp) then
-            this%raster%current_line_width = 1.0_wp  ! Minimum visible width
-        else if (width >= 10.0_wp) then
-            this%raster%current_line_width = 10.0_wp  ! Maximum reasonable width
+            this%raster%current_line_width = 1.0_wp
         else
-            this%raster%current_line_width = width  ! Direct 1:1 mapping
+            px = pt2px(width, this%raster%dpi)
+            this%raster%current_line_width = max(1.0_wp, px)
         end if
     end subroutine raster_set_line_width
 
@@ -174,16 +172,8 @@ contains
         character(len=*), intent(in) :: text
         real(wp) :: px, py
         integer(1) :: r, g, b
-        character(len=500) :: processed_text, escaped_text
-        character(len=600) :: math_ready
-        integer :: processed_len, math_len
-        ! Process LaTeX commands
-        call process_latex_in_text(text, processed_text, processed_len)
-        ! Ensure mathtext gets parsed if superscripts/subscripts are present
-        call prepare_mathtext_if_needed(processed_text(1:processed_len), &
-                                        math_ready, math_len)
-        ! Pass through Unicode (STB supports it)
-        call escape_unicode_for_raster(math_ready(1:math_len), escaped_text)
+        character(len=600) :: escaped_text
+        call prepare_text_for_raster(text, escaped_text)
 
         ! Transform coordinates to plot area (like matplotlib)
         ! Note: Raster Y=0 at top, so we need to flip Y coordinates
@@ -430,7 +420,7 @@ contains
         character(len=*), intent(in) :: style
         real(wp) :: marker_size
 
-        marker_size = get_marker_size(style)
+        marker_size = get_marker_size(style) * this%raster%dpi / REFERENCE_DPI
 
         select case (trim(style))
         case (MARKER_CIRCLE)
@@ -631,15 +621,16 @@ contains
         end if
     end function raster_get_height_scale
 
-    subroutine raster_fill_heatmap_context(this, x_grid, y_grid, z_grid, z_min, z_max)
+    subroutine raster_fill_heatmap_context(this, x_grid, y_grid, z_grid, z_min, z_max, colormap_name)
         !! Fill contour plot - delegate to specialized rendering module
         class(raster_context), intent(inout) :: this
         real(wp), intent(in) :: x_grid(:), y_grid(:), z_grid(:, :)
         real(wp), intent(in) :: z_min, z_max
+        character(len=*), intent(in), optional :: colormap_name
 
         call raster_fill_heatmap(this%raster, this%width, this%height, this%plot_area, &
                                  this%x_min, this%x_max, this%y_min, this%y_max, &
-                                 x_grid, y_grid, z_grid, z_min, z_max)
+                                 x_grid, y_grid, z_grid, z_min, z_max, colormap_name)
     end subroutine raster_fill_heatmap_context
 
     subroutine raster_render_legend_specialized_context(this, legend, &
@@ -659,7 +650,8 @@ contains
         type(legend_t), intent(in) :: legend
         real(wp), intent(out) :: legend_width, legend_height
 
-        call raster_calculate_legend_dimensions(legend, legend_width, legend_height)
+        call raster_calculate_legend_dimensions(legend, legend_width, legend_height, &
+                                                  this%raster%dpi)
     end subroutine raster_calculate_legend_dimensions_context
 
     subroutine raster_set_legend_border_width_context(this)

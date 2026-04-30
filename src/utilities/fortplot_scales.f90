@@ -18,16 +18,17 @@ module fortplot_scales
     real(wp), parameter :: MAX_LOG_RANGE = 50.0_wp      ! 50 orders of magnitude max
     real(wp), parameter :: MIN_LOG_VALUE = -25.0_wp     ! 10^-25 minimum
     real(wp), parameter :: MAX_LOG_VALUE = 25.0_wp      ! 10^25 maximum
+    real(wp), parameter :: SYMMLOG_LINSCALE_ADJ = 1.0_wp
     
 contains
 
     function apply_scale_transform(value, scale_type, threshold) result(transformed)
         !! Apply forward scale transformation to a single value
         !! 
-        !! @param value: Input value to transform
-        !! @param scale_type: Type of scale ('linear', 'log', 'symlog')
-        !! @param threshold: Threshold for symlog scale (ignored for others)
-        !! @return transformed: Transformed value
+        !! value: Input value to transform
+        !! scale_type: Type of scale (linear, log, symlog)
+        !! threshold: Threshold for symlog scale (ignored for others)
+        !! Returns transformed: Transformed value
         
         real(wp), intent(in) :: value
         character(len=*), intent(in) :: scale_type
@@ -49,10 +50,10 @@ contains
     function apply_inverse_scale_transform(value, scale_type, threshold) result(original)
         !! Apply inverse scale transformation to recover original value
         !! 
-        !! @param value: Transformed value to invert
-        !! @param scale_type: Type of scale ('linear', 'log', 'symlog')
-        !! @param threshold: Threshold for symlog scale (ignored for others)
-        !! @return original: Original value before transformation
+        !! value: Transformed value to invert
+        !! scale_type: Type of scale (linear, log, symlog)
+        !! threshold: Threshold for symlog scale (ignored for others)
+        !! Returns original: Original value before transformation
         
         real(wp), intent(in) :: value
         character(len=*), intent(in) :: scale_type
@@ -74,11 +75,11 @@ contains
     function transform_x_coordinate(x, x_min, x_max, width) result(x_screen)
         !! Transform data x-coordinate to screen coordinate
         !! 
-        !! @param x: Data x-coordinate
-        !! @param x_min: Minimum x value in data range
-        !! @param x_max: Maximum x value in data range
-        !! @param width: Screen width in pixels
-        !! @return x_screen: Screen x-coordinate
+        !! x: Data x-coordinate
+        !! x_min: Minimum x value in data range
+        !! x_max: Maximum x value in data range
+        !! width: Screen width in pixels
+        !! Returns x_screen: Screen x-coordinate
         
         real(wp), intent(in) :: x, x_min, x_max
         integer, intent(in) :: width
@@ -94,12 +95,12 @@ contains
     function transform_y_coordinate(y, y_min, y_max, height, invert) result(y_screen)
         !! Transform data y-coordinate to screen coordinate
         !! 
-        !! @param y: Data y-coordinate
-        !! @param y_min: Minimum y value in data range
-        !! @param y_max: Maximum y value in data range
-        !! @param height: Screen height in pixels
-        !! @param invert: Whether to invert y-axis (optional, default false)
-        !! @return y_screen: Screen y-coordinate
+        !! y: Data y-coordinate
+        !! y_min: Minimum y value in data range
+        !! y_max: Maximum y value in data range
+        !! height: Screen height in pixels
+        !! invert: Whether to invert y-axis (optional, default false)
+        !! Returns y_screen: Screen y-coordinate
         
         real(wp), intent(in) :: y, y_min, y_max
         integer, intent(in) :: height
@@ -151,18 +152,16 @@ contains
     function apply_symlog_transform(value, threshold) result(transformed)
         !! Apply symmetric logarithmic transformation
         !! Linear within [-threshold, threshold], logarithmic outside
+        !! Matches matplotlib SymmetricalLogTransform(base=10, linscale=1)
         real(wp), intent(in) :: value, threshold
         real(wp) :: transformed
-        
+
         if (abs(value) <= threshold) then
-            ! Linear region
-            transformed = value
+            transformed = value * SYMMLOG_LINSCALE_ADJ
         else if (value > threshold) then
-            ! Positive logarithmic region
-            transformed = threshold + log10(value / threshold)
+            transformed = threshold * (SYMMLOG_LINSCALE_ADJ + log10(value / threshold))
         else
-            ! Negative logarithmic region
-            transformed = -threshold - log10(-value / threshold)
+            transformed = -threshold * (SYMMLOG_LINSCALE_ADJ + log10(-value / threshold))
         end if
     end function apply_symlog_transform
 
@@ -170,16 +169,16 @@ contains
         !! Apply inverse symmetric logarithmic transformation
         real(wp), intent(in) :: value, threshold
         real(wp) :: original
-        
-        if (abs(value) <= threshold) then
-            ! Linear region
-            original = value
-        else if (value > threshold) then
-            ! Positive logarithmic region
-            original = threshold * (10.0_wp**(value - threshold))
+        real(wp) :: boundary
+
+        boundary = threshold * SYMMLOG_LINSCALE_ADJ
+
+        if (abs(value) <= boundary) then
+            original = value / SYMMLOG_LINSCALE_ADJ
+        else if (value > boundary) then
+            original = threshold * (10.0_wp**(value / threshold - SYMMLOG_LINSCALE_ADJ))
         else
-            ! Negative logarithmic region
-            original = -threshold * (10.0_wp**(-value - threshold))
+            original = -threshold * (10.0_wp**(-value / threshold - SYMMLOG_LINSCALE_ADJ))
         end if
     end function apply_inverse_symlog_transform
 

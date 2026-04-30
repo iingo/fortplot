@@ -38,8 +38,11 @@ CI_FPM_TEST_TARGETS += test_colormap_interpolation_regression
 CI_FPM_TEST_TARGETS += test_pdf_flate_content
 CI_FPM_TEST_TARGETS += test_pdf_coordinate_mapping_985
 CI_FPM_TEST_TARGETS += test_quad_fill_edges
+CI_FPM_TEST_TARGETS += test_svg_savefig
+CI_FPM_TEST_TARGETS += test_new_plot_types
+CI_FPM_TEST_TARGETS += test_ascii_animation_output
 
-.PHONY: all build example debug test clean help matplotlib example_python example_matplotlib example_python_dual doc create_build_dirs create_test_dirs validate-output test-docs verify-functionality verify-setup verify-with-evidence verify-size-compliance verify-complexity issue-branch issue-open-pr pr-merge pr-cleanup issue-loop issue-loop-dry test-python-bridge-example git-prune verify-warnings
+.PHONY: all build example debug test clean help doc create_build_dirs create_test_dirs validate-output test-docs verify-functionality verify-setup verify-with-evidence verify-size-compliance verify-complexity issue-branch issue-open-pr pr-merge pr-cleanup issue-loop issue-loop-dry git-prune verify-warnings
 
 # Default target
 all: build
@@ -51,7 +54,7 @@ build:
 # Build and run the examples
 example: create_build_dirs
 	fpm run --example $(FPM_FLAGS_TEST) $(ARGS)
-	# Build and run special examples that need manual compilation
+	# Re-run examples via fpm ensuring output directories exist
 	@if [ -z "$(ARGS)" ]; then \
 		./scripts/compile_special_examples.sh 2>/dev/null || true; \
 	fi
@@ -61,6 +64,8 @@ example: create_build_dirs
 		cmake_polynomials.png cmake_scientific.png \
 		cmake_formats.png cmake_formats.pdf cmake_formats.txt \
 		fpm_template_demo.png fpm_template_demo.pdf \
+		fpm_*.png fpm_*.pdf fpm_*.txt \
+		fmp_*.pdf \
 		test_constant_y.pdf test_constant_x.pdf test_single_point.pdf \
 		coordinate_validation.pdf \
 		dpi_demo_*.png \
@@ -120,62 +125,19 @@ test-ci:
 	@$(TIMEOUT_PREFIX) fpm test $(FPM_FLAGS_TEST) --target test_pdf_coordinate_mapping_985 || exit 1
 	@# Regression guard for Issue #995 (PDF axes stroke color should be black)
 	@$(TIMEOUT_PREFIX) python3 scripts/test_pdf_axes_color_black.py || exit 1
-	@# Security regression tests for Python bridge stdin handling (PR #1010)
-	@$(TIMEOUT_PREFIX) python3 scripts/test_python_bridge_security.py || exit 1
-	@# Basic non-interactive Python bridge functionality using example command file (fixes #919)
-	@chmod +x scripts/test_python_bridge_example.sh && $(TIMEOUT_PREFIX) ./scripts/test_python_bridge_example.sh || exit 1
-	@# Python bridge: pcolormesh via wrapper
-	@$(TIMEOUT_PREFIX) python3 scripts/test_python_pcolormesh_via_bridge.py || exit 1
-	@# Python bridge: log scale via wrapper
-	@$(TIMEOUT_PREFIX) python3 scripts/test_python_scales_via_bridge.py || exit 1
-	@# Python bridge: streamplot via wrapper
-	@$(TIMEOUT_PREFIX) python3 scripts/test_python_streamplot_via_bridge.py || exit 1
-	@$(TIMEOUT_PREFIX) python3 scripts/test_python_examples.py || exit 1
 	@# Regression for filled-quad edge coverage (prevents 1px cuts on borders)
 	@$(TIMEOUT_PREFIX) fpm test $(FPM_FLAGS_TEST) --target test_quad_fill_edges || exit 1
 	@# Guard against redundant pcolormesh tests (Issue #897)
 	@$(TIMEOUT_PREFIX) ./scripts/test_pcolormesh_guard.sh || exit 1
 	@# Enforce directory item limits for src/* subfolders (Issue #914)
 	@$(TIMEOUT_PREFIX) python3 scripts/test_directory_organization_limits.py || exit 1
+	@# SVG end-to-end: stateful API through rendering pipeline to SVG file (Issue #1690)
+	@$(TIMEOUT_PREFIX) fpm test $(FPM_FLAGS_TEST) --target test_svg_savefig || exit 1
+	@# New plot types: imshow/step/stem/fill/fill_between/twinx/twiny behavioral smoke tests (Issue #1712)
+	@$(TIMEOUT_PREFIX) fpm test $(FPM_FLAGS_TEST) --target test_new_plot_types || exit 1
+	@# ASCII animation regression: frame clearing and file content (Issue #1699)
+	@$(TIMEOUT_PREFIX) fpm test $(FPM_FLAGS_TEST) --target test_ascii_animation_output || exit 1
 	@echo "CI essential test suite completed successfully"
-
-# Run Python examples with fortplot (default mode)
-example_python:
-	@echo "Running Python examples with fortplot..."
-	@for dir in example/python/*/; do \
-		if [ -f "$$dir"*.py ]; then \
-			echo "Running $$dir"; \
-			cd "$$dir" && python3 *.py && cd - > /dev/null; \
-		fi; \
-	done
-	@echo "Python examples completed!"
-
-# Run Python examples with matplotlib (comparison mode)
-example_matplotlib:
-	@echo "Running Python examples with matplotlib for comparison..."
-	@for dir in example/python/*/; do \
-		if [ -f "$$dir"*.py ]; then \
-			echo "Running $$dir with matplotlib"; \
-			cd "$$dir" && python3 *.py --matplotlib && cd - > /dev/null; \
-		fi; \
-	done
-	@echo "Matplotlib comparison plots generated!"
-
-# Run Python examples in both modes and consolidate outputs
-example_python_dual:
-	@echo "Running Python examples in both modes (fortplot + matplotlib)..."
-	@for dir in example/python/*/; do \
-		if ls "$$dir"*.py >/dev/null 2>&1; then \
-			echo "[fortplot] $$dir"; \
-			cd "$$dir" && python3 *.py && cd - > /dev/null; \
-			echo "[matplotlib] $$dir"; \
-			cd "$$dir" && python3 *.py --matplotlib && cd - > /dev/null; \
-		fi; \
-	done
-	@echo "Dual-mode Python example runs completed!"
-
-# Legacy matplotlib target (deprecated, use example_matplotlib)
-matplotlib: example_matplotlib
 
 # Clean build artifacts
 clean:
@@ -243,10 +205,10 @@ doc:
 		fi; \
 	done
 	# Ensure animation.mp4 explicitly present at expected locations (robust fallback)
-	if [ -f output/example/fortran/animation/animation.mp4 ]; then \
+	if [ -f output/example/fortran/save_animation_demo/animation.mp4 ]; then \
 		mkdir -p build/doc/page/media/examples/animation build/doc/media/examples/animation; \
-		cp output/example/fortran/animation/animation.mp4 build/doc/page/media/examples/animation/ 2>/dev/null || true; \
-		cp output/example/fortran/animation/animation.mp4 build/doc/media/examples/animation/ 2>/dev/null || true; \
+		cp output/example/fortran/save_animation_demo/animation.mp4 build/doc/page/media/examples/animation/ 2>/dev/null || true; \
+		cp output/example/fortran/save_animation_demo/animation.mp4 build/doc/media/examples/animation/ 2>/dev/null || true; \
 	fi
 
 
@@ -288,7 +250,7 @@ create_build_dirs:
 	@mkdir -p output/example/fortran/legend_demo
 	@mkdir -p output/example/fortran/legend_box_demo
 	@mkdir -p output/example/fortran/unicode_demo
-	@mkdir -p output/example/fortran/animation
+	@mkdir -p output/example/fortran/save_animation_demo
 	@mkdir -p output/example/fortran/annotation_demo
 	@mkdir -p output/example/fortran/histogram_demo
 	@mkdir -p output/example/fortran/subplot_demo
@@ -380,9 +342,6 @@ help:
 	@echo "Available targets:"
 	@echo "  build            - Compile the project"
 	@echo "  example          - Build and run all Fortran examples"
-	@echo "  example_python   - Run Python examples with fortplot"
-	@echo "  example_matplotlib - Run Python examples with matplotlib (comparison)"
-	@echo "  example_python_dual - Run Python examples with both backends and consolidate outputs"
 	@echo "  debug            - Build and run apps for debugging"
 	@echo "  test             - Run all tests"
 	@echo "  test-ci          - Run CI-optimized tests (skip heavy I/O, MPEG tests)"

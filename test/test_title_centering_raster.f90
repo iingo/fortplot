@@ -1,8 +1,8 @@
 program test_title_centering_raster
     !! Verifies raster title centering over plot area
     use fortplot_layout, only: plot_margins_t, plot_area_t, calculate_plot_area
-    use fortplot_constants, only: TITLE_VERTICAL_OFFSET
-    use fortplot_text, only: calculate_text_width_with_size, TITLE_FONT_SIZE
+    use fortplot_constants, only: TITLE_VERTICAL_OFFSET, REFERENCE_DPI
+    use fortplot_text, only: calculate_text_width_with_size, TITLE_FONT_SIZE_PT
     use fortplot_raster_axes, only: compute_title_position
     use, intrinsic :: iso_fortran_env, only: wp => real64
     implicit none
@@ -13,19 +13,17 @@ program test_title_centering_raster
     integer, parameter :: CANVAS_HEIGHT = 480
 
     character(len=*), parameter :: title_text = 'Simple Sine Wave'
-    character(len=500) :: processed_text, escaped_text
-    integer :: processed_len
+    character(len=600) :: escaped_text
     real(wp) :: title_px_r, title_py_r
     integer :: expected_px, expected_py, measured_width
 
     margins = plot_margins_t()
     call calculate_plot_area(CANVAS_WIDTH, CANVAS_HEIGHT, margins, plot_area)
 
-    call compute_title_position(plot_area, title_text, processed_text, processed_len, &
-                                escaped_text, title_px_r, title_py_r)
+    call compute_title_position(plot_area, title_text, escaped_text, &
+                                title_px_r, title_py_r)
 
-    ! Use the title font size for width calculation, matching the actual implementation
-    measured_width = calculate_text_width_with_size(trim(escaped_text), real(TITLE_FONT_SIZE, wp))
+    measured_width = calculate_text_width_with_size(trim(escaped_text), TITLE_FONT_SIZE_PT * REFERENCE_DPI / 72.0_wp)
     ! If width calculation fails, use the same fallback as the implementation
     if (measured_width <= 0) then
         measured_width = len_trim(escaped_text) * 12

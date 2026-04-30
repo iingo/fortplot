@@ -17,9 +17,8 @@ module fortplot_raster_axes
     use fortplot_axes, only: compute_scale_ticks, format_tick_label, MAX_TICKS
     use fortplot_tick_calculation, only: determine_decimals_from_ticks, &
                                          format_tick_value_consistent
-    use fortplot_latex_parser, only: process_latex_in_text
-    use fortplot_unicode, only: escape_unicode_for_raster
-    use fortplot_text, only: calculate_text_width, render_text_to_image
+    use fortplot_text, only: calculate_text_width
+    use fortplot_text_rendering, only: render_text_to_image
     use, intrinsic :: iso_fortran_env, only: wp => real64
     implicit none
 
@@ -745,14 +744,12 @@ contains
         end do
     end subroutine compute_non_overlapping_mask_simple
 
-    ! Re-export wrappers for test compatibility
-    integer function compute_ylabel_x_pos(y_tick_label_edge, rotated_width, plot_area) &
+    ! Re-export wrapper for test compatibility
+    integer function compute_ylabel_x_pos(y_tick_label_edge, rotated_width) &
         result(x_pos)
         integer, intent(in) :: y_tick_label_edge
         integer, intent(in) :: rotated_width
-        type(plot_area_t), intent(in) :: plot_area
-        x_pos = compute_ylabel_x_pos_impl(y_tick_label_edge, rotated_width, &
-                                          plot_area)
+        x_pos = compute_ylabel_x_pos_impl(y_tick_label_edge, rotated_width)
     end function compute_ylabel_x_pos
 
     ! Old interface for backward compatibility

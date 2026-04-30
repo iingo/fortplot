@@ -1,6 +1,7 @@
 program save_animation_demo
     use fortplot
     use fortplot_animation
+    use fortplot_system_runtime, only: create_directory_runtime
     implicit none
 
     integer, parameter :: NFRAMES = 60
@@ -35,7 +36,7 @@ program save_animation_demo
     ! Save as MP4 video with 24 fps to GitHub Pages structure
     print *, "Saving animation as MP4..."
     call create_output_directory()
-    call save_animation_with_error_handling(anim, "output/example/fortran/animation/animation.mp4", 24)
+    call save_animation_with_error_handling(anim, "output/example/fortran/save_animation_demo/animation.mp4", 24)
     
 contains
 
@@ -85,9 +86,12 @@ contains
     end subroutine save_animation_with_error_handling
     
     subroutine create_output_directory()
-        ! SECURITY: Directory creation using execute_command_line disabled for security compliance
-        ! Create directory structure would require secure alternatives
-        print *, "Info: Output directory creation disabled for security compliance"
+        logical :: success
+
+        call create_directory_runtime("output/example/fortran/save_animation_demo", success)
+        if (.not. success) then
+            print *, "WARNING: Could not create output/example/fortran/save_animation_demo"
+        end if
     end subroutine create_output_directory
     
 end program save_animation_demo

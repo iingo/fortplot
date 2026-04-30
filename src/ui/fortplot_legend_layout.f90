@@ -9,7 +9,6 @@ module fortplot_legend_layout
     use, intrinsic :: iso_fortran_env, only: wp => real64
     use fortplot_text, only: calculate_text_width, calculate_text_height, init_text_system
     use fortplot_constants, only: STANDARD_WIDTH_PIXELS, STANDARD_HEIGHT_PIXELS, TEXT_WIDTH_RATIO
-    use fortplot_pdf_text_metrics, only: estimate_pdf_text_width
     use fortplot_latex_parser, only: process_latex_in_text
     implicit none
     
@@ -119,9 +118,6 @@ contains
         character(len=512) :: temp_processed_label
         integer :: processed_len
         real(wp), parameter :: FUDGE_PIXELS = 0.0_wp
-        ! Convert PDF measurements (points) to the 100 DPI pixel scale used by layout math
-        real(wp), parameter :: POINTS_TO_PIXELS = 100.0_wp / 72.0_wp
-        real(wp) :: pdf_width_points, pdf_width_pixels, entry_pdf_width
         
         max_text_width = 0.0_wp
         total_text_width = 0.0_wp
@@ -144,10 +140,6 @@ contains
                 ! For fallback, use processed text length
                 entry_text_width = real(len_trim(processed_label), wp) * data_width * TEXT_WIDTH_RATIO
             end if
-            pdf_width_points = estimate_pdf_text_width(processed_label)
-            pdf_width_pixels = pdf_width_points * POINTS_TO_PIXELS
-            entry_pdf_width = pdf_width_pixels / data_to_pixel_ratio_x
-            entry_text_width = max(entry_text_width, entry_pdf_width)
             total_text_width = total_text_width + entry_text_width
             max_text_width = max(max_text_width, entry_text_width)
         end do
@@ -234,10 +226,11 @@ contains
         
         ! Local constants to avoid circular dependency
         integer, parameter :: LEGEND_UPPER_LEFT = 1
-        integer, parameter :: LEGEND_UPPER_RIGHT = 2  
+        integer, parameter :: LEGEND_UPPER_RIGHT = 2
         integer, parameter :: LEGEND_LOWER_LEFT = 3
         integer, parameter :: LEGEND_LOWER_RIGHT = 4
-        
+        integer, parameter :: LEGEND_EAST = 5
+
         select case (position)
         case (LEGEND_UPPER_LEFT)
             box%x = margins(1)
@@ -251,6 +244,9 @@ contains
         case (LEGEND_LOWER_RIGHT)
             box%x = data_width - box%width - margins(1)
             box%y = box%height + margins(2)
+        case (LEGEND_EAST)
+            box%x = data_width + margins(1)
+            box%y = (data_height - box%height)*0.5_wp
         case default  ! Default to upper right
             box%x = data_width - box%width - margins(1)
             box%y = data_height - margins(2)

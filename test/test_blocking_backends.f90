@@ -2,14 +2,14 @@ program test_blocking_backends
     !! Test blocking parameter works with all backends
     
     use fortplot
-    use fortplot_security, only: get_test_output_path, safe_create_directory
+    use fortplot_system_runtime, only: create_directory_runtime
     use iso_fortran_env, only: wp => real64
     implicit none
     
     logical :: dir_success
     
     ! Create test output directory first
-    call safe_create_directory('build/test', dir_success)
+    call create_directory_runtime('build/test', dir_success)
     if (.not. dir_success) then
         print *, "WARNING: Could not create build/test directory"
     end if
@@ -38,7 +38,7 @@ contains
         
         ! Test non-blocking save
         print *, "Testing PNG save with blocking=.false."
-        call fig%savefig('test/output/test_blocking_backend.png', blocking=.false.)
+        call fig%savefig('build/test/output/test_blocking_backend.png', blocking=.false.)
         
         print *, "test_blocking_with_png: PASSED"
     end subroutine test_blocking_with_png
@@ -59,7 +59,7 @@ contains
         
         ! Test non-blocking save
         print *, "Testing PDF save with blocking=.false."
-        call fig%savefig('test/output/test_blocking_backend.pdf', blocking=.false.)
+        call fig%savefig('build/test/output/test_blocking_backend.pdf', blocking=.false.)
         
         print *, "test_blocking_with_pdf: PASSED"
     end subroutine test_blocking_with_pdf
@@ -80,7 +80,7 @@ contains
         
         ! Test non-blocking save
         print *, "Testing ASCII save with blocking=.false."
-        call fig%savefig('test/output/test_blocking_backend.txt', blocking=.false.)
+        call fig%savefig('build/test/output/test_blocking_backend.txt', blocking=.false.)
         
         ! Also test show() which uses ASCII backend
         print *, "Testing show() with blocking=.false."

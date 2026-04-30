@@ -2,7 +2,8 @@ module fortplot_raster_rendering
     !! Specialized rendering functionality for raster backend
     !! Extracted from fortplot_raster.f90 for size reduction (SRP compliance)
     use fortplot_constants, only: EPSILON_COMPARE
-    use fortplot_raster_core, only: raster_image_t
+    use fortplot_constants, only: REFERENCE_DPI
+    use fortplot_raster_core, only: raster_image_t, scale_px
     use fortplot_margins, only: plot_area_t
     use fortplot_colormap, only: colormap_value_to_color
     use fortplot_interpolation, only: interpolate_z_bilinear
@@ -20,7 +21,7 @@ contains
 
     subroutine raster_fill_heatmap(raster, width, height, plot_area, x_min, x_max, &
                                    y_min, y_max, &
-                                   x_grid, y_grid, z_grid, z_min, z_max)
+                                   x_grid, y_grid, z_grid, z_min, z_max, colormap_name)
         !! Fill contour plot using scanline method for pixel-by-pixel rendering
         type(raster_image_t), intent(inout) :: raster
         integer, intent(in) :: width, height
@@ -28,6 +29,7 @@ contains
         real(wp), intent(in) :: x_min, x_max, y_min, y_max
         real(wp), intent(in) :: x_grid(:), y_grid(:), z_grid(:, :)
         real(wp), intent(in) :: z_min, z_max
+        character(len=*), intent(in), optional :: colormap_name
 
         integer :: nx, ny
 
@@ -42,13 +44,13 @@ contains
         call raster_render_heatmap_pixels(raster, width, height, plot_area, &
                                           x_min, x_max, y_min, y_max, &
                                           x_grid, y_grid, z_grid, &
-                                          z_min, z_max)
+                                          z_min, z_max, colormap_name)
     end subroutine raster_fill_heatmap
 
     subroutine raster_render_heatmap_pixels(raster, width, height, plot_area, &
                                             x_min, x_max, y_min, y_max, &
                                             x_grid, y_grid, z_grid, &
-                                            z_min, z_max)
+                                            z_min, z_max, colormap_name)
         !! Render heatmap pixels using pixel-by-pixel scanline approach
         type(raster_image_t), intent(inout) :: raster
         integer, intent(in) :: width, height
@@ -56,12 +58,17 @@ contains
         real(wp), intent(in) :: x_min, x_max, y_min, y_max
         real(wp), intent(in) :: x_grid(:), y_grid(:), z_grid(:, :)
         real(wp), intent(in) :: z_min, z_max
+        character(len=*), intent(in), optional :: colormap_name
 
         integer :: px, py
         real(wp) :: world_x, world_y, z_value
         real(wp) :: color_rgb(3)
         integer(1) :: r_byte, g_byte, b_byte
         integer :: offset
+        character(len=20) :: cmap
+
+        cmap = 'viridis'
+        if (present(colormap_name)) cmap = trim(colormap_name)
 
         ! Scanline rendering: iterate over all pixels in plot area
         do py = plot_area%bottom, plot_area%bottom + plot_area%height - 1
@@ -78,7 +85,7 @@ contains
                 call interpolate_z_bilinear(x_grid, y_grid, z_grid, world_x, &
                                             world_y, z_value)
                 call colormap_value_to_color(z_value, z_min, z_max, &
-                                             'viridis', color_rgb)
+                                             cmap, color_rgb)
 
                 ! Convert to bytes and set pixel
                 r_byte = color_to_byte(color_rgb(1))
@@ -202,15 +209,20 @@ contains
         ! This method exists only for polymorphic compatibility
     end subroutine raster_render_legend_specialized
 
-    subroutine raster_calculate_legend_dimensions(legend, legend_width, legend_height)
+    subroutine raster_calculate_legend_dimensions(legend, legend_width, legend_height, &
+                                                  dpi)
         !! Calculate legend dimensions for PNG using real text metrics (pixels)
         use fortplot_legend, only: legend_t
         use fortplot_text, only: calculate_text_width, calculate_text_height
         type(legend_t), intent(in) :: legend
         real(wp), intent(out) :: legend_width, legend_height
+        real(wp), intent(in), optional :: dpi
 
         integer :: i, max_label_w, label_h, padding_x, line_len, text_gap, &
                    pad_y, entry_gap
+        real(wp) :: dpi_val
+        dpi_val = REFERENCE_DPI
+        if (present(dpi)) dpi_val = dpi
 
         if (legend%num_entries <= 0) then
             legend_width = 0.0_wp
@@ -226,15 +238,13 @@ contains
             label_h = max(label_h, calculate_text_height(legend%entries(i)%label))
         end do
 
-        ! Match layout spacing used in legend layout (in pixels here)
-        line_len = 20
-        text_gap = 6
-        padding_x = 4
-        pad_y = 4
-        entry_gap = 5
+        line_len = scale_px(20, dpi_val)
+        text_gap = scale_px(6, dpi_val)
+        padding_x = scale_px(4, dpi_val)
+        pad_y = scale_px(4, dpi_val)
+        entry_gap = scale_px(5, dpi_val)
 
         legend_width = real(2*padding_x + line_len + text_gap + max_label_w + 1, wp)
-        ! +1px AA/border safety
         legend_height = real(2*pad_y + legend%num_entries*label_h + &
                              max(legend%num_entries - 1, 0)*entry_gap, wp)
     end subroutine raster_calculate_legend_dimensions

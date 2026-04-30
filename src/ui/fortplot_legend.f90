@@ -7,6 +7,7 @@ module fortplot_legend
     !! Interface Segregation: Focused legend interface
     !! Dependency Inversion: Depends on abstractions, not concrete backends
     
+    use fortplot_ascii_mathtext, only: sanitize_ascii_text
     use fortplot_context, only: plot_context
     use, intrinsic :: iso_fortran_env, only: wp => real64
     implicit none
@@ -14,12 +15,14 @@ module fortplot_legend
     private
     public :: legend_t, legend_entry_t, create_legend, legend_render, render_ascii_legend, render_standard_legend
     public :: LEGEND_UPPER_LEFT, LEGEND_UPPER_RIGHT, LEGEND_LOWER_LEFT, LEGEND_LOWER_RIGHT
+    public :: LEGEND_EAST
     
     ! Legend position constants
     integer, parameter :: LEGEND_UPPER_LEFT = 1
-    integer, parameter :: LEGEND_UPPER_RIGHT = 2  
+    integer, parameter :: LEGEND_UPPER_RIGHT = 2
     integer, parameter :: LEGEND_LOWER_LEFT = 3
     integer, parameter :: LEGEND_LOWER_RIGHT = 4
+    integer, parameter :: LEGEND_EAST = 5
     
     type :: legend_entry_t
         !! Single Responsibility: Represents one legend entry
@@ -113,10 +116,12 @@ contains
             this%position = LEGEND_UPPER_LEFT
         case ("upper right")
             this%position = LEGEND_UPPER_RIGHT
-        case ("lower left") 
+        case ("lower left")
             this%position = LEGEND_LOWER_LEFT
         case ("lower right")
             this%position = LEGEND_LOWER_RIGHT
+        case ("east")
+            this%position = LEGEND_EAST
         case default
             this%position = LEGEND_UPPER_RIGHT  ! Default
         end select
@@ -156,30 +161,32 @@ contains
         real(wp) :: text_x, text_y
         character(len=:), allocatable :: legend_line
         integer :: available_width
+        character(len=256) :: sanitized_label
+        integer :: sanitized_len
 
         do i = 1, legend%num_entries
             ! For ASCII, arrange entries vertically going downward
             text_x = legend_x
             text_y = legend_y + real(i-1, wp)
-            
-            ! Ensure text fits within canvas bounds  
+
+            ! Ensure text fits within canvas bounds
             text_y = max(1.0_wp, min(text_y, real(max(2, backend%height - 2), wp)))
-            
+
             ! Set color for this entry
             call backend%color(legend%entries(i)%color(1), &
                               legend%entries(i)%color(2), &
                               legend%entries(i)%color(3))
-            
+
+            call sanitize_ascii_text(legend%entries(i)%label, sanitized_label, sanitized_len)
+
             ! Create legend entry with actual marker character or line symbol
             if (allocated(legend%entries(i)%marker) .and. &
                 trim(legend%entries(i)%marker) /= '' .and. &
                 trim(legend%entries(i)%marker) /= 'None') then
-                ! Show marker character
                 legend_line = get_ascii_marker_char(legend%entries(i)%marker) // ' ' // &
-                    trim(legend%entries(i)%label)
+                    trim(sanitized_label(1:sanitized_len))
             else
-                ! Show line symbol for line-only plots
-                legend_line = '-- ' // trim(legend%entries(i)%label)
+                legend_line = '-- ' // trim(sanitized_label(1:sanitized_len))
             end if
 
             available_width = max(1, backend%width - int(text_x) + 1)
@@ -450,6 +457,9 @@ contains
             case (LEGEND_LOWER_RIGHT)
                 ascii_x = max(margin_x, screen_width - longest_entry - margin_x + 1)
                 ascii_y = max(margin_y + 1, screen_height - total_lines - margin_y + 2)
+            case (LEGEND_EAST)
+                ascii_x = max(margin_x, screen_width - longest_entry - margin_x + 1)
+                ascii_y = (screen_height - total_lines)*0.5_wp + 1
             case default
                 ascii_x = max(margin_x, screen_width - longest_entry - margin_x + 1)
                 ascii_y = margin_y + 1
@@ -499,22 +509,17 @@ contains
         !! Draw filled white rectangle for legend background
         class(plot_context), intent(inout) :: backend
         real(wp), intent(in) :: x1, y1, x2, y2
-        
-        ! Draw filled rectangle by drawing horizontal lines
-        real(wp) :: y, dy
-        integer :: num_lines, i
-        
+
+        real(wp) :: x_quad(4), y_quad(4)
+
         ! Ensure legend background is rendered with solid style and white fill
         call backend%set_line_style('-')
         call backend%color(1.0_wp, 1.0_wp, 1.0_wp)
 
-        num_lines = 50  ! Number of horizontal lines to fill the box
-        dy = abs(y1 - y2) / real(num_lines, wp)
-        
-        do i = 0, num_lines
-            y = y1 - real(i, wp) * dy
-            call backend%line(x1, y, x2, y)
-        end do
+        ! Fill rectangle using fill_quad instead of hatch lines
+        x_quad = [x1, x2, x2, x1]
+        y_quad = [y1, y1, y2, y2]
+        call backend%fill_quad(x_quad, y_quad)
     end subroutine draw_legend_box
 
     subroutine draw_legend_border(backend, x1, y1, x2, y2)

@@ -10,36 +10,20 @@ program test_histogram_functionality
     
     use, intrinsic :: iso_fortran_env, only: wp => real64
     use fortplot
-    use fortplot_security, only: get_test_output_path
-    use fortplot_system_runtime, only: is_windows
-    use fortplot_windows_performance, only: setup_windows_performance, &
-                                            should_use_memory_backend
-    use fortplot_fast_io, only: fast_savefig, enable_fast_io
     implicit none
 
     integer :: test_count = 0
     integer :: pass_count = 0
-    logical :: on_windows
     logical, parameter :: HIST_ENABLED = .true.   ! hist() implemented; enable tests (fixes #285)
 
     print *, "=== HISTOGRAM FUNCTIONALITY TESTS ==="
-    
+
     if (.not. HIST_ENABLED) then
         print *, "NOTE: Histogram tests disabled pending hist() implementation (issue #285)"
         print *, "All test infrastructure ready - enable HIST_ENABLED when hist() is implemented"
         return
     end if
-    
-    ! Initialize performance optimization for Windows CI
-    on_windows = is_windows()
-    if (on_windows) then
-        call setup_windows_performance()
-        if (should_use_memory_backend()) then
-            call enable_fast_io()
-            print *, "Enabled fast I/O with memory backend for Windows CI"
-        end if
-    end if
-    
+
     ! Run test categories
     call test_basic_functionality()
     call test_boundary_conditions()
@@ -295,12 +279,8 @@ contains
         call fig%add_hist(large_data, bins=50)
         call fig%set_title('Large Dataset (10K points)')
         
-        filename = 'test/output/histogram_large.png'
-        if (should_use_memory_backend()) then
-            call fast_savefig(fig, filename)
-        else
-            call fig%savefig(filename)
-        end if
+        filename = 'build/test/output/histogram_large.png'
+        call fig%savefig(filename)
         
         call cpu_time(end_time)
         print *, '  Large dataset processed in ', end_time - start_time, ' seconds'
@@ -327,14 +307,14 @@ contains
         call fig%initialize(600, 400)
         call fig%add_hist(data, bins=100)  ! Reduced from 500 for speed
         call fig%set_title('Many Bins Test')
-        filename = 'test/output/histogram_many_bins.png'
+        filename = 'build/test/output/histogram_many_bins.png'
         call fig%savefig(filename)
         
         ! Test with minimal bins
         call fig%initialize(600, 400)
         call fig%add_hist(data, bins=1)
         call fig%set_title('Single Bin Test')
-        filename = 'test/output/histogram_one_bin.png'
+        filename = 'build/test/output/histogram_one_bin.png'
         call fig%savefig(filename)
         
         ! Test with very wide range data
@@ -344,7 +324,7 @@ contains
         call fig%initialize(600, 400)
         call fig%add_hist(data, bins=20)
         call fig%set_title('Wide Range Data')
-        filename = 'test/output/histogram_wide_range.png'
+        filename = 'build/test/output/histogram_wide_range.png'
         call fig%savefig(filename)
         
         call end_test()
@@ -370,7 +350,7 @@ contains
             call fig%add_hist(data, bins=20)
             call fig%set_title('Memory Test')
             
-            filename = 'test/output/histogram_memory.png'
+            filename = 'build/test/output/histogram_memory.png'
             call fig%savefig(filename)
             
             deallocate(data)
@@ -385,7 +365,7 @@ contains
         call fig%add_hist(data(1000:2000), bins=30, label='Second Half')
         call fig%legend()
         call fig%set_title('Overlapping Histograms')
-        filename = 'test/output/histogram_overlapping.png'
+        filename = 'build/test/output/histogram_overlapping.png'
         call fig%savefig(filename)
         
         deallocate(data)

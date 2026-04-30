@@ -5,9 +5,11 @@ module fortplot_figure_grid
     !! Extracted from fortplot_figure_core to improve modularity
     
     use, intrinsic :: iso_fortran_env, only: wp => real64
+    use fortplot_constants, only: FALLBACK_GRID_GRAY
     use fortplot_context
     use fortplot_ascii, only: ascii_context
     use fortplot_axes, only: compute_scale_ticks
+    use fortplot_colors, only: parse_color
     use fortplot_scales, only: apply_scale_transform
     implicit none
     
@@ -72,7 +74,8 @@ contains
                                 margin_bottom, margin_top, xscale, yscale, &
                                 symlog_threshold, x_min, x_max, y_min, y_max, &
                                 x_min_transformed, x_max_transformed, &
-                                y_min_transformed, y_max_transformed, grid_linestyle)
+                                y_min_transformed, y_max_transformed, grid_linestyle, &
+                                grid_color_hex)
         !! Render grid lines on the figure
         class(plot_context), intent(inout) :: backend
         logical, intent(in) :: grid_enabled
@@ -87,6 +90,7 @@ contains
         real(wp), intent(in) :: x_min_transformed, x_max_transformed
         real(wp), intent(in) :: y_min_transformed, y_max_transformed
         character(len=*), intent(in) :: grid_linestyle
+        character(len=*), intent(in), optional :: grid_color_hex
         
         real(wp) :: major_ticks(50)
         real(wp) :: tick_val, x1, y1, x2, y2, alpha_val
@@ -105,8 +109,17 @@ contains
         class default
         end select
         
-        ! Set grid color (gray) and alpha (alpha currently backend-specific; kept for API parity)
-        grid_color = [0.7_wp, 0.7_wp, 0.7_wp]
+        ! Set grid color from config or fallback to gray
+        grid_color = [FALLBACK_GRID_GRAY, FALLBACK_GRID_GRAY, FALLBACK_GRID_GRAY]
+        if (present(grid_color_hex)) then
+            if (len_trim(grid_color_hex) > 0) then
+                block
+                    logical :: ok
+                    call parse_color(trim(grid_color_hex), &
+                        grid_color, ok)
+                end block
+            end if
+        end if
         alpha_val = max(0.0_wp, min(1.0_wp, grid_alpha))
 
         ! Normalize transformed bounds to ensure proper ordering
